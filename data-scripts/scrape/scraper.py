@@ -57,78 +57,97 @@ class CBFCScraper:
         
         # Construct the GWT-RPC payload - exactly matching the curl command
         payload = f'7|0|6|{self.base_url}/cbfc/cbfc.Cbfc/|A425282E16D492E942BAD73170B377F8|cbfc.certificate.qrRedirect.shared.QRRedirect_Srv|getDefaultValues|java.lang.String/2004016611|{certificate_id}|1|2|3|4|1|5|6|'
-        
-        try:
-            # Make request with both headers and cookies
-            response = requests.post(
-                url, 
-                headers=self.headers, 
-                cookies=self.cookies,
-                data=payload
-            )
-            response.raise_for_status()
             
-            self.debug_print("Raw response:", response.text)
+        try:
+            # Make the HTTP request
+            response = requests.post(url, headers=self.headers, cookies=self.cookies, data=payload)
             
             # First verify we got a successful response with data
             if "//OK" not in response.text:
                 print("Did not receive OK response from server")
                 return None
-            
-            # Extract the actual data part
+                
+            # Extract the actual data part by removing the //OK prefix
             data_parts = response.text.split('//OK')[1].strip()
             self.debug_print("Data parts:", data_parts)
             
-            try:
-                # Parse the JSON-like response
-                data = eval(data_parts)  # Using eval since the response is already in Python list format
-                
-                # Find the index containing the HTML-like string with film details
-                film_details_str = None
-                for item in data[0]:
-                    if isinstance(item, str) and 'Film Name' in item:
-                        film_details_str = item
-                        break
-                
-                if not film_details_str:
-                    print("Could not find film details in response")
-                    return None
-                
-                # Extract film details using regex
-                certificate_info = {}
-                
-                # Extract basic info
-                file_no_match = re.search(r'File No\. : ([^<]+)', film_details_str)
-                if file_no_match:
-                    certificate_info['file_no'] = file_no_match.group(1).strip()
-                
-                film_name_match = re.search(r'Film Name : ([^<]+)', film_details_str)
-                if film_name_match:
-                    certificate_info['film_name'] = film_name_match.group(1).strip()
-                
-                # Extract cast and crew info
-                for role in ['Director', 'Producer', 'Main Actors', 'Story', 'Music']:
-                    pattern = f"{role}</span></b></div><div id='castCreditDescription'>([^<]+)"
-                    match = re.search(pattern, film_details_str)
-                    if match:
-                        certificate_info[role.lower().replace(' ', '_')] = match.group(1).strip()
-                
-                # Extract endorsements
-                endorsements_match = re.search(r'<div class=\'endorsementHeading\' >([^<]+)', film_details_str)
-                if endorsements_match:
-                    certificate_info['endorsements'] = endorsements_match.group(1).strip()
-                
-                return certificate_info
-                
-            except Exception as e:
-                print(f"Error parsing response data: {e}")
-                if self.debug:
-                    import traceback
-                    traceback.print_exc()
-                return None
+            # Parse the outer array structure
+            parsed_data = eval(data_parts)  # Using eval since it's already in Python list format
             
-        except requests.RequestException as e:
-            print(f"Error fetching certificate details: {e}")
+            # The main data array is at index 28
+            if not isinstance(parsed_data, list) or len(parsed_data) < 29:
+                print("Invalid data structure")
+                return None
+                
+            main_data = parsed_data[28]
+            if not isinstance(main_data, list):
+                print("Invalid main data structure")
+                return None
+
+            # Now we can create our structured data
+            certificate_info = {
+                'type': main_data[0],
+                'model_type': main_data[2],
+                'applicant': main_data[3],
+                'duration': main_data[5],
+                'certifier': main_data[7],
+                'category': main_data[8],
+                'title': main_data[9],
+                'classification': main_data[10],
+                'language': main_data[11],
+                'format': main_data[12],
+                'certifier_full': main_data[13],
+                'synopsis': main_data[14],
+                'id': main_data[15]
+            }
+
+            # Parse credits HTML (position 4)
+            credits_html = main_data[4]
+            for role in ['Director', 'Producer', 'Main Actors', 'Story', 'Music']:
+                pattern = f"{role}</span></b></div><div id='castCreditDescription'>([^<]+)"
+                match = re.search(pattern, credits_html)
+                if match:
+                    certificate_info[f'credit_{role.lower().replace(" ", "_")}'] = match.group(1).strip()
+
+            # Parse endorsement HTML (position 6)
+            endorsement_html = main_data[6]
+            
+            # Extract basic endorsement info
+            file_no_match = re.search(r'File No\. : ([^<]+)', endorsement_html)
+            if file_no_match:
+                certificate_info['file_no'] = file_no_match.group(1).strip()
+            
+            film_name_match = re.search(r'Film Name : ([^<]+)', endorsement_html)
+            if film_name_match:
+                certificate_info['film_name_full'] = film_name_match.group(1).strip()
+                
+            cert_no_match = re.search(r'Cert No\.([^<]+)Dated([^<]+)', endorsement_html)
+            if cert_no_match:
+                certificate_info['cert_no'] = cert_no_match.group(1).strip()
+                certificate_info['cert_date'] = cert_no_match.group(2).strip()
+
+            # Extract modifications table
+            modifications = []
+            table_pattern = r'<tr><td[^>]*>(\d+)</td><td>([^<]+)</td><td[^>]*>([^<]+)</td><td[^>]*>([^<]+)</td><td[^>]*>([^<]+)</td></tr>'
+            for match in re.finditer(table_pattern, endorsement_html):
+                modifications.append({
+                    'cut_no': int(match.group(1)),
+                    'description': match.group(2).strip(),
+                    'deleted': match.group(3).strip(),
+                    'replaced': match.group(4).strip(),
+                    'inserted': match.group(5).strip()
+                })
+            
+            if modifications:
+                certificate_info['modifications'] = modifications
+
+            return certificate_info
+
+        except Exception as e:
+            print(f"Error parsing response data: {e}")
+            if self.debug:
+                import traceback
+                traceback.print_exc()
             return None
 
 def main():
