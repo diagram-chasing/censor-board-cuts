@@ -1,16 +1,26 @@
 import requests
 import json
 import re
-from typing import Dict, Optional
+import csv
+import logging
+from typing import Dict, Optional, Tuple, List
 from bs4 import BeautifulSoup
 from datetime import datetime
+from pathlib import Path
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 class CBFCScraper:
-    def __init__(self, debug=False):
-        self.debug = debug
+    def __init__(self):
         self.base_url = "https://www.ecinepramaan.gov.in"
         
-        # Headers and cookies remain the same
+        # Headers and cookies remain the same as before
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0',
             'Accept': '*/*',
@@ -32,6 +42,7 @@ class CBFCScraper:
             'Pragma': 'no-cache',
             'Cache-Control': 'no-cache'
         }
+        
         
         self.cookies = {
             'JSESSIONID': 'dfe_FiCBOw6WS4X7Vn5FFY_L1RvAivy-owhGXWlQ.cbfc-prod-sys-app2',
@@ -188,12 +199,10 @@ class CBFCScraper:
             response = requests.post(url, headers=self.headers, cookies=self.cookies, data=payload)
             
             if "//OK" not in response.text:
-                print("Did not receive OK response from server")
+                logger.error(f"Certificate ID {certificate_id}: Did not receive OK response from server")
                 return None
                 
             data_parts = response.text.split('//OK')[1].strip()
-            self.debug_print("Raw Data Parts", data_parts)
-            
             parsed_data = eval(data_parts)
             
             # Extract basic information
@@ -211,42 +220,88 @@ class CBFCScraper:
                                 endorsement = self.parse_endorsement_section(subitem)
                                 certificate_info.update(endorsement)
 
+            if certificate_info.get('id') and certificate_info.get('title'):
+                logger.info(f"Successfully scraped: {certificate_info['title']} (ID: {certificate_info['id']})")
             return certificate_info
 
         except Exception as e:
-            print(f"Error parsing response data: {e}")
-            if self.debug:
-                import traceback
-                traceback.print_exc()
+            logger.error(f"Error processing certificate ID {certificate_id}: {str(e)}")
             return None
 
+    def process_certificates(self, certificate_ids: List[str]) -> Tuple[List[Dict], List[Dict]]:
+        """
+        Process a list of certificate IDs and return metadata and modifications
+        """
+        metadata_records = []
+        modification_records = []
+        
+        for cert_id in certificate_ids:
+            result = self.get_certificate_details(cert_id)
+            if not result:
+                continue
+                
+            # Separate modifications from metadata
+            modifications = result.pop('modifications', [])
+            
+            # Add metadata record
+            metadata_records.append(result)
+            
+            # Add modification records
+            for mod in modifications:
+                mod_record = {
+                    'certificate_id': result.get('id', ''),
+                    'film_name': result.get('title', ''),
+                    **mod
+                }
+                modification_records.append(mod_record)
+                
+        return metadata_records, modification_records
+
+    def save_to_csv(self, data: List[Dict], filename: str, directory: str = 'output'):
+        """
+        Save data to CSV file
+        """
+        if not data:
+            logger.warning(f"No data to save for {filename}")
+            return
+            
+        # Create output directory if it doesn't exist
+        Path(directory).mkdir(parents=True, exist_ok=True)
+        
+        # Generate filepath
+        filepath = Path(directory) / filename
+        
+        # Get fieldnames from first record
+        fieldnames = list(data[0].keys())
+        
+        try:
+            with open(filepath, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(data)
+            logger.info(f"Successfully saved {len(data)} records to {filepath}")
+        except Exception as e:
+            logger.error(f"Error saving to {filepath}: {str(e)}")
+
+
 def main():
-    # Example usage
-    scraper = CBFCScraper(debug=True)
+    scraper = CBFCScraper()
     
     # Test with multiple certificate IDs
     certificate_ids = [
-        "100090292400000155",  # First example
-        "100090292400000120"   # Second example
+        "100090292400000155",
+        "100090292400000120",
+        "100090292400000138"
     ]
     
-    for cert_id in certificate_ids:
-        print(f"\nFetching details for certificate ID: {cert_id}")
-        print("-" * 50)
-        
-        result = scraper.get_certificate_details(cert_id)
-        if result:
-            print("\nCertificate Details:")
-            print("-" * 50)
-            for key, value in result.items():
-                if key == 'modifications':
-                    print(f"\n{key.title()}:")
-                    for mod in value:
-                        print(f"  Cut {mod['cut_no']}: {mod['description']}")
-                else:
-                    print(f"{key.replace('_', ' ').title()}: {value}")
-        else:
-            print("Failed to fetch certificate details")
+    # Process certificates
+    metadata_records, modification_records = scraper.process_certificates(certificate_ids)
+    
+    # Save to CSV files
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    scraper.save_to_csv(metadata_records, f'film_metadata_{timestamp}.csv')
+    scraper.save_to_csv(modification_records, f'film_modifications_{timestamp}.csv')
+
 
 if __name__ == "__main__":
     main()
