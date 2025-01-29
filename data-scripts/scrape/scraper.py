@@ -10,12 +10,14 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from pathlib import Path
 
-# Load tokens from tokens.json
-with open('tokens.json', 'r') as f:
-    tokens = json.load(f)
+# Load cookies from cookies.json
+with open('cookies.json', 'r') as f:
+    cookies = json.load(f)
+with open('headers.json', 'r') as f:
+    headers = json.load(f)
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
@@ -28,26 +30,20 @@ class CBFCScraper:
         
         # Headers copied directly from working curl request
         self.session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0',
-        'Accept': '*/*',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Content-Type': 'text/x-gwt-rpc; charset=utf-8',
-        'X-GWT-Permutation': tokens['headers']['X-GWT-Permutation'],
-        'X-GWT-Module-Base': tokens['headers']['X-GWT-Module-Base'],
-        'DTMN_SERVICE': 'TRUE',
-        'DTMN_SESSIONID': tokens['cookies']['DTMN_SESSIONID'],
-        'DTMN_SESSION_VALIDATION': '0',
-        'Origin': 'https://www.ecinepramaan.gov.in',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-origin'
-          })
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0',
+            'Content-Type': 'text/x-gwt-rpc; charset=utf-8',
+            'X-GWT-Permutation': '1',
+            'DTMN_SERVICE': 'TRUE',
+            'DTMN_SESSIONID': headers['headers']['DTMN_SESSIONID'],
+            'DTMN_SESSION_VALIDATION': '0',
+            'Origin': 'https://www.ecinepramaan.gov.in',
+        })
+        
+        # Disable automatic Accept-Encoding header addition
+        self.session.headers.pop('Accept-Encoding', None)
 
-        # Set cookies from tokens.json
-        for cookie_name, cookie_value in tokens['cookies'].items():
+        # Set cookies from cookies.json
+        for cookie_name, cookie_value in cookies['cookies'].items():
             self.session.cookies.set(cookie_name, cookie_value, domain='ecinepramaan.gov.in')
 
     def parse_credits_section(self, html_content: str) -> Dict:
@@ -172,17 +168,31 @@ class CBFCScraper:
 
         return main_info
 
+    def _to_curl(self, url: str, payload: str) -> str:
+        """Convert request to curl command for debugging"""
+        # Convert cookies to Cookie header
+        cookie_header = '; '.join([f"{k}={v}" for k, v in self.session.cookies.items()])
+        headers = dict(self.session.headers)
+        if cookie_header:
+            headers['Cookie'] = cookie_header
+            
+        headers_str = ' '.join([f"-H '{k}: {v}'" for k, v in headers.items()])
+        return f"curl -X POST '{url}' {headers_str} -d '{payload}'"
+
     def get_certificate_details(self, certificate_id: str) -> Optional[Dict]:
         """Fetch and parse certificate details for a given certificate ID"""
         try:
-            # Update referer for this request
-            self.session.headers['Referer'] = f"{self.base_url}/cbfc/?a=Certificate_Detail&i={certificate_id}"
+            logger.debug(f"Fetching details for certificate ID: {certificate_id}")
             
             url = f"{self.base_url}/cbfc/cbfc/certificate/qrRedirect/client/QRRedirect"
             payload = f'7|0|6|{self.base_url}/cbfc/cbfc.Cbfc/|A425282E16D492E942BAD73170B377F8|cbfc.certificate.qrRedirect.shared.QRRedirect_Srv|getDefaultValues|java.lang.String/2004016611|{certificate_id}|1|2|3|4|1|5|6|'
             
+            logger.debug("Equivalent curl command:")
+            logger.debug(self._to_curl(url, payload))
+            
             response = self.session.post(url, data=payload)
             response.raise_for_status()
+            logger.debug(response.text)
             
             if "//OK" not in response.text:
                 logger.error(f"Certificate ID {certificate_id}: Did not receive OK response")
