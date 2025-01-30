@@ -235,51 +235,71 @@ class CBFCScraper:
             return None
 
     def process_certificates(self, certificate_ids: List[str]) -> Tuple[List[Dict], List[Dict]]:
-        """Process a list of certificate IDs and return metadata and modifications"""
+        """Process a list of certificate IDs and save results"""
         metadata_records = []
         modification_records = []
         
+        # Create output directory
+        Path('output').mkdir(parents=True, exist_ok=True)
+        metadata_path = Path('output/metadata.csv')
+        modifications_path = Path('output/modifications.csv')
+        
+        # Get existing fields from CSV files if they exist
+        metadata_fields = set()
+        modification_fields = set()
+        
+        if metadata_path.exists():
+            with open(metadata_path, 'r', newline='', encoding='utf-8') as f:
+                metadata_fields.update(next(csv.reader(f)))
+        
+        if modifications_path.exists():
+            with open(modifications_path, 'r', newline='', encoding='utf-8') as f:
+                modification_fields.update(next(csv.reader(f)))
+        
+        # Process each certificate
         for cert_id in certificate_ids:
             result = self.get_certificate_details(cert_id)
             if not result:
                 continue
-                
+            
             # Separate modifications from metadata
             modifications = result.pop('modifications', [])
             
-            # Add metadata record
+            # Update metadata fields and write to CSV
+            metadata_fields.update(result.keys())
+            write_header = not metadata_path.exists()
+            
+            with open(metadata_path, 'a', newline='', encoding='utf-8') as metadata_file:
+                metadata_writer = csv.DictWriter(metadata_file, fieldnames=sorted(metadata_fields))
+                if write_header:
+                    metadata_writer.writeheader()
+                metadata_writer.writerow(result)
             metadata_records.append(result)
             
-            # Add modification records
-            for mod in modifications:
-                mod_record = {
-                    'certificate_id': result.get('id', ''),
-                    'film_name': result.get('title', ''),
-                    **mod
-                }
-                modification_records.append(mod_record)
-                
-        return metadata_records, modification_records
-
-    def save_to_csv(self, data: List[Dict], filename: str, directory: str = 'output'):
-        """Save data to CSV file"""
-        if not data:
-            logger.warning(f"No data to save for {filename}")
-            return
+            # Handle modifications if present
+            if modifications:
+                write_header = not modifications_path.exists()
+                for mod in modifications:
+                    mod_record = {
+                        'certificate_id': result.get('id', ''),
+                        'film_name': result.get('title', ''),
+                        **mod
+                    }
+                    modification_fields.update(mod_record.keys())
+                    
+                    with open(modifications_path, 'a', newline='', encoding='utf-8') as modifications_file:
+                        modifications_writer = csv.DictWriter(modifications_file, fieldnames=sorted(modification_fields))
+                        if write_header:
+                            modifications_writer.writeheader()
+                            write_header = False
+                        modifications_writer.writerow(mod_record)
+                    modification_records.append(mod_record)
             
-        Path(directory).mkdir(parents=True, exist_ok=True)
-        filepath = Path(directory) / filename
+            # Log progress
+            logger.info(f"Processed certificate ID: {cert_id}")
         
-        fieldnames = list(data[0].keys())
-        
-        try:
-            with open(filepath, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(data)
-            logger.info(f"Successfully saved {len(data)} records to {filepath}")
-        except Exception as e:
-            logger.error(f"Error saving to {filepath}: {str(e)}")
+        logger.info(f"Processed {len(metadata_records)} certificates with {len(modification_records)} modifications")
+        return metadata_records, modification_records
 
 
 def main():
