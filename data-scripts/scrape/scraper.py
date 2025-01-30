@@ -10,12 +10,6 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from pathlib import Path
 
-# Load cookies from cookies.json
-with open('cookies.json', 'r') as f:
-    cookies = json.load(f)
-with open('headers.json', 'r') as f:
-    headers = json.load(f)
-
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -24,9 +18,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class CBFCScraper:
-    def __init__(self):
+    def __init__(self, cookies_dir: str = None):
         self.session = requests.Session()
         self.base_url = "https://www.ecinepramaan.gov.in"
+        
+        # Get the directory containing the cookies and headers files
+        cookies_dir = cookies_dir or Path(__file__).parent
+        cookies_path = Path(cookies_dir) / 'cookies.json'
+        headers_path = Path(cookies_dir) / 'headers.json'
+        
+        # Load cookies and headers
+        try:
+            with open(cookies_path, 'r') as f:
+                cookies = json.load(f)
+            with open(headers_path, 'r') as f:
+                headers = json.load(f)
+        except FileNotFoundError:
+            raise Exception("Cookies or headers files not found. Please run getCookies.py first.")
         
         # Headers copied directly from working curl request
         self.session.headers.update({
@@ -278,7 +286,7 @@ def main():
     scraper = CBFCScraper()
     
     # Test with a single certificate ID first
-    certificate_id = "100090292400000155"
+    certificate_id = "100090292400000109"
     result = scraper.get_certificate_details(certificate_id)
     
     if result:
