@@ -10,13 +10,9 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from pathlib import Path
 
-# The followig need to be updated for each session
-# DTM_SESSIONID
-# X-GWT-Permutation
-# JSESSIONID
-# TS01978ffa
-# TS0184077e
-# ecinepramaan_cookie
+# Load tokens from tokens.json
+with open('tokens.json', 'r') as f:
+    tokens = json.load(f)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,33 +28,27 @@ class CBFCScraper:
         
         # Headers copied directly from working curl request
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0',
-            'Accept': '*/*',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Content-Type': 'text/x-gwt-rpc; charset=utf-8',
-            'X-GWT-Permutation': '859E251D1A7860A54635D369EBA63343',
-            'X-GWT-Module-Base': 'https://www.ecinepramaan.gov.in/cbfc/cbfc.Cbfc/',
-            'DTMN_SERVICE': 'TRUE',
-            'DTMN_SESSIONID': '95a0b50e-7bbf-414d-a9eb-a747268d0f87',  # Using the working one for now
-            'DTMN_SESSION_VALIDATION': '0',
-            'Origin': 'https://www.ecinepramaan.gov.in',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Sec-Fetch-Dest': 'empty',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Site': 'same-origin',
-            'Pragma': 'no-cache',
-            'Cache-Control': 'no-cache'
-        })
-        
-        # Cookies copied directly from working request
-        self.session.cookies.update({
-            'JSESSIONID': 'wmdxuqyqXK4vFbWpJ-2yDoKCmkaiPhkprKO2Jbor.cbfc-prod-sys-app2',
-            'TS01978ffa': '01415ded824a8ef86a011302d092f75e8670ccfbadd349fd090d745ef30c672059b2c466f1bb58124e15716dc6ba9f639928dc89603c15204b4ce94171406a0662ce01ba34caf829275be3f1f1e1ede47e2e579ad0',
-            'TS0184077e': '01415ded825136d5abb1370a1c037426a7e5a338b8f86c2dd66d47ef6b358a6bc6e872f14af114df9b2cc4f58b9bac8b11d8b24773eb1dd305b6de2b314caf6aa5fb3ac516',
-            'ecinepramaan_cookie': '!ET2xZmAr+YqufeBbMRJgDS1zFjsUALJkCRkNSLcj7YSz5lhwwDA1YWbWGkaWgz/VO11EhPtIfGadbuAdBe6xKT+dlKfIOrPrs+qXAvsk'
-        })
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0',
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Content-Type': 'text/x-gwt-rpc; charset=utf-8',
+        'X-GWT-Permutation': tokens['headers']['X-GWT-Permutation'],
+        'X-GWT-Module-Base': tokens['headers']['X-GWT-Module-Base'],
+        'DTMN_SERVICE': 'TRUE',
+        'DTMN_SESSIONID': tokens['cookies']['DTMN_SESSIONID'],
+        'DTMN_SESSION_VALIDATION': '0',
+        'Origin': 'https://www.ecinepramaan.gov.in',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin'
+          })
+
+        # Set cookies from tokens.json
+        for cookie_name, cookie_value in tokens['cookies'].items():
+            self.session.cookies.set(cookie_name, cookie_value, domain='ecinepramaan.gov.in')
 
     def parse_credits_section(self, html_content: str) -> Dict:
         """Parse the credits section using BeautifulSoup"""
