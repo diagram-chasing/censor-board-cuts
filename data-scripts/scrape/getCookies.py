@@ -2,12 +2,18 @@ import json
 import logging
 import requests
 import uuid
+from pathlib import Path
 
 logging.basicConfig(level=logging.DEBUG, format='%(message)s')
 logger = logging.getLogger(__name__)
 
-def get_tokens():
+def get_tokens(output_dir: str = None):
     try:
+        # Ensure output directory exists
+        output_dir = output_dir or Path(__file__).parent
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
         session = requests.Session()
         base_url = "https://www.ecinepramaan.gov.in/cbfc"
         
@@ -78,7 +84,9 @@ def get_tokens():
         cookies['cookies'] = raw_cookies
         logger.info(f"Final cookies to save: {raw_cookies}")
         
-        with open('cookies.json', 'w') as f:
+        # Save cookies to the specified directory
+        cookies_path = output_path / 'cookies.json'
+        with open(cookies_path, 'w') as f:
             json.dump(cookies, f, indent=4)
             
         # Save important headers
@@ -89,11 +97,13 @@ def get_tokens():
         }
         logger.info(f"Headers to save: {headers_to_save}")
         
-        with open('headers.json', 'w') as f:
+        # Save headers to the specified directory
+        headers_path = output_path / 'headers.json'
+        with open(headers_path, 'w') as f:
             json.dump(headers_to_save, f, indent=4)
             
-        logger.info("\nSuccessfully retrieved and saved cookies to cookies.json")
-        logger.info("Headers saved to headers.json")
+        logger.info(f"\nSuccessfully saved cookies to {cookies_path}")
+        logger.info(f"Headers saved to {headers_path}")
         return True
         
     except Exception as e:
