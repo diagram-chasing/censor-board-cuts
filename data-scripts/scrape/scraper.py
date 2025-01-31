@@ -251,10 +251,26 @@ class CBFCScraper:
         metadata_records = []
         modification_records = []
         
-        # Create output directory
-        Path('output').mkdir(parents=True, exist_ok=True)
-        metadata_path = Path('output/metadata_2.csv')
-        modifications_path = Path('output/modifications_2.csv')
+        # Create output directories
+        output_dir = Path('data/raw')
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Load progress
+        last_processed_id = self._load_progress(output_dir)
+        if last_processed_id:
+            try:
+                start_idx = certificate_ids.index(last_processed_id) + 1
+                remaining_ids = certificate_ids[start_idx:]
+            except ValueError:
+                remaining_ids = certificate_ids
+        else:
+            remaining_ids = certificate_ids
+        
+        logger.info(f"Resuming from after ID: {last_processed_id}")
+        logger.info(f"Remaining certificates to process: {len(remaining_ids)}")
+        
+        metadata_path = output_dir / 'metadata.csv'
+        modifications_path = output_dir / 'modifications.csv'
         
         # Define fixed set of columns
         metadata_fields = [
@@ -269,7 +285,7 @@ class CBFCScraper:
         ]
         
         # Process each certificate
-        for cert_id in certificate_ids:
+        for cert_id in remaining_ids:
             try:
                 result = self.get_certificate_details(cert_id)
                 if not result:
@@ -323,6 +339,10 @@ class CBFCScraper:
                 # Log progress
                 logger.info(f"Processed certificate ID: {cert_id}")
                 
+                # After successful processing and saving to CSV:
+                with open(output_dir / 'progress.json', 'w') as f:
+                    json.dump({'last_id': cert_id}, f)
+                
             except Exception as e:
                 logger.error(f"Error processing certificate ID {cert_id}: {str(e)}")
                 continue
@@ -330,6 +350,13 @@ class CBFCScraper:
         logger.info(f"Processed {len(metadata_records)} certificates with {len(modification_records)} modifications")
         return metadata_records, modification_records
 
+    def _load_progress(self, output_dir: Path) -> str:
+        """Load last processed certificate ID"""
+        progress_file = output_dir / 'progress.json'
+        if progress_file.exists():
+            with open(progress_file, 'r') as f:
+                return json.load(f).get('last_id', '')
+        return ''
 
 def main():
     scraper = CBFCScraper()
