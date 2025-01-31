@@ -2,4 +2,7 @@ __pycache__/
 
 data-scripts/scrape/cookies.json
 data-scripts/scrape/headers.json
-.Rproj.user
+.Rproj.user/
+.Rhistory
+.Rprofile
+.Renviron
