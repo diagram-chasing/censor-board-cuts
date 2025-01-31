@@ -54,6 +54,18 @@ class CBFCScraper:
         for cookie_name, cookie_value in cookies['cookies'].items():
             self.session.cookies.set(cookie_name, cookie_value, domain='ecinepramaan.gov.in')
 
+    def clean_text(self, text: str) -> str:
+        """Clean text by removing HTML and normalizing whitespace"""
+        if not text:
+            return ""
+        # Remove HTML tags
+        text = re.sub(r'<[^>]+>', '', text)
+        # Normalize whitespace
+        text = ' '.join(text.split())
+        # Remove special characters but keep basic punctuation
+        text = re.sub(r'[^\w\s.,;:()\-]', '', text)
+        return text.strip()
+
     def parse_credits_section(self, html_content: str) -> Dict:
         """Parse the credits section using BeautifulSoup"""
         credits = {}
@@ -87,10 +99,10 @@ class CBFCScraper:
             if len(cells) == 5:
                 modification = {
                     'cut_no': int(cells[0].get_text().strip()),
-                    'description': cells[1].get_text().strip(),
-                    'deleted': cells[2].get_text().strip(),
-                    'replaced': cells[3].get_text().strip(),
-                    'inserted': cells[4].get_text().strip()
+                    'description': self.clean_text(cells[1].get_text()),
+                    'deleted': self.clean_text(cells[2].get_text()),
+                    'replaced': self.clean_text(cells[3].get_text()),
+                    'inserted': self.clean_text(cells[4].get_text())
                 }
                 modifications.append(modification)
         return modifications
@@ -107,7 +119,7 @@ class CBFCScraper:
         if endorsement_div:
             divs = endorsement_div.find_all('div', recursive=False)
             for div in divs:
-                text = div.get_text().strip()
+                text = self.clean_text(div.get_text())
                 if 'File No.' in text:
                     endorsement['file_no'] = text.split(':')[-1].strip()
                 elif 'Film Name' in text:
@@ -241,62 +253,79 @@ class CBFCScraper:
         
         # Create output directory
         Path('output').mkdir(parents=True, exist_ok=True)
-        metadata_path = Path('output/metadata.csv')
-        modifications_path = Path('output/modifications.csv')
+        metadata_path = Path('output/metadata_2.csv')
+        modifications_path = Path('output/modifications_2.csv')
         
-        # Get existing fields from CSV files if they exist
-        metadata_fields = set()
-        modification_fields = set()
+        # Define fixed set of columns
+        metadata_fields = [
+            'id', 'title', 'category', 'language', 'format', 'duration',
+            'applicant', 'certifier', 'synopsis', 'file_no', 'film_name_full',
+            'cert_no', 'cert_date', 'final_duration'
+        ]
         
-        if metadata_path.exists():
-            with open(metadata_path, 'r', newline='', encoding='utf-8') as f:
-                metadata_fields.update(next(csv.reader(f)))
-        
-        if modifications_path.exists():
-            with open(modifications_path, 'r', newline='', encoding='utf-8') as f:
-                modification_fields.update(next(csv.reader(f)))
+        modification_fields = [
+            'certificate_id', 'film_name', 'cut_no', 'description',
+            'deleted', 'replaced', 'inserted'
+        ]
         
         # Process each certificate
         for cert_id in certificate_ids:
-            result = self.get_certificate_details(cert_id)
-            if not result:
+            try:
+                result = self.get_certificate_details(cert_id)
+                if not result:
+                    continue
+                
+                # Clean all text fields
+                for key, value in result.items():
+                    if isinstance(value, str):
+                        result[key] = self.clean_text(value)
+                
+                # Separate modifications from metadata
+                modifications = result.pop('modifications', [])
+                
+                # Ensure all required fields exist
+                for field in metadata_fields:
+                    if field not in result:
+                        result[field] = ''
+                
+                # Write metadata to CSV
+                write_header = not metadata_path.exists()
+                with open(metadata_path, 'a', newline='', encoding='utf-8') as metadata_file:
+                    metadata_writer = csv.DictWriter(metadata_file, fieldnames=metadata_fields)
+                    if write_header:
+                        metadata_writer.writeheader()
+                    metadata_writer.writerow(result)
+                metadata_records.append(result)
+                
+                # Handle modifications if present
+                if modifications:
+                    write_header = not modifications_path.exists()
+                    for mod in modifications:
+                        mod_record = {
+                            'certificate_id': result.get('id', ''),
+                            'film_name': result.get('title', ''),
+                            **mod
+                        }
+                        
+                        # Ensure all required fields exist
+                        for field in modification_fields:
+                            if field not in mod_record:
+                                mod_record[field] = ''
+                        
+                        with open(modifications_path, 'a', newline='', encoding='utf-8') as modifications_file:
+                            modifications_writer = csv.DictWriter(modifications_file, fieldnames=modification_fields)
+                            if write_header:
+                                modifications_writer.writeheader()
+                                write_header = False
+                            modifications_writer.writerow(mod_record)
+                        modification_records.append(mod_record)
+                
+                # Log progress
+                logger.info(f"Processed certificate ID: {cert_id}")
+                
+            except Exception as e:
+                logger.error(f"Error processing certificate ID {cert_id}: {str(e)}")
                 continue
-            
-            # Separate modifications from metadata
-            modifications = result.pop('modifications', [])
-            
-            # Update metadata fields and write to CSV
-            metadata_fields.update(result.keys())
-            write_header = not metadata_path.exists()
-            
-            with open(metadata_path, 'a', newline='', encoding='utf-8') as metadata_file:
-                metadata_writer = csv.DictWriter(metadata_file, fieldnames=sorted(metadata_fields))
-                if write_header:
-                    metadata_writer.writeheader()
-                metadata_writer.writerow(result)
-            metadata_records.append(result)
-            
-            # Handle modifications if present
-            if modifications:
-                write_header = not modifications_path.exists()
-                for mod in modifications:
-                    mod_record = {
-                        'certificate_id': result.get('id', ''),
-                        'film_name': result.get('title', ''),
-                        **mod
-                    }
-                    modification_fields.update(mod_record.keys())
-                    
-                    with open(modifications_path, 'a', newline='', encoding='utf-8') as modifications_file:
-                        modifications_writer = csv.DictWriter(modifications_file, fieldnames=sorted(modification_fields))
-                        if write_header:
-                            modifications_writer.writeheader()
-                            write_header = False
-                        modifications_writer.writerow(mod_record)
-                    modification_records.append(mod_record)
-            
-            # Log progress
-            logger.info(f"Processed certificate ID: {cert_id}")
         
         logger.info(f"Processed {len(metadata_records)} certificates with {len(modification_records)} modifications")
         return metadata_records, modification_records
