@@ -6,3 +6,5 @@ data-scripts/scrape/headers.json
 .Rhistory
 .Rprofile
 .Renviron
+.RData
+.Rproj.user/
