@@ -33,3 +33,8 @@ TODO:
 - [ ] Better content classification.
 - [ ] Create a data dictionary documenting all fields.
 - [ ] Create a dashboard for exploring the data.
+
+Related projects:
+
+- https://github.com/harman28/cbfc
+- https://github.com/ananddotiyer/MovieCertifications
