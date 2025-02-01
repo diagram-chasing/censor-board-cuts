@@ -5,7 +5,12 @@ Collect and analyze film certification data from the Central Board of Film Certi
 This project consists of two main components:
 
 - Data Collection: A Python-based scraper that collects film certification data from the CBFC website
-- Analysis: R scripts for cleaning and analyzing the collected data
+- Analysis: R scripts for cleaning and analyzing the collected data.
+
+## Preview Data
+
+- [Modifications](https://flatgithub.com/diagram-chasing/censor-board-cuts?filename=data%252Fmodifications.csv)
+- [Certifications](https://flatgithub.com/diagram-chasing/censor-board-cuts?filename=data%252Fmetadata.csv)
 
 ## Data Collection
 
