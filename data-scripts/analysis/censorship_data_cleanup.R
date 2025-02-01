@@ -29,34 +29,6 @@ clean_metadata <- function(df) {
   
   return(df)
 }
-
-clean_metadata <- function(df) {
-  setDT(df)
-  
-  # Calculate duration_mins first
-  df[, duration_mins := {
-    duration_raw = str_extract(duration, "\\d+\\.\\d+")
-    ifelse(!is.na(duration_raw),
-           as.numeric(substr(duration_raw, 1, regexpr("\\.", duration_raw)-1)) +
-             as.numeric(substr(duration_raw, regexpr("\\.", duration_raw)+1, nchar(duration_raw)))/60,
-           NA_real_)
-  }]
-  
-  # Then use it in subsequent operations
-  df[, `:=`(
-    id = format(as.numeric(id), scientific = FALSE),
-    category = as.factor(category),
-    language = as.factor(language),
-    format = as.factor(format),
-    applicant = ifelse(applicant == "", NA_character_, applicant),
-    certifier = ifelse(certifier == "", NA_character_, certifier),
-    has_valid_duration = !is.na(duration_mins),
-    has_language = !is.na(language),
-    has_synopsis = !is.na(synopsis) & synopsis != ""
-  )]
-  
-  return(df)
-}
 clean_modifications <- function(df) {
   # Pre-compile all patterns
   mod_patterns <- list(
@@ -205,4 +177,6 @@ clean_modifications <- function(df) {
 modifications <- fread('../../data/raw/modifications.csv')
 modifications <- clean_modifications(modifications)
 metadata <- fread('../../data/raw/metadata.csv')
-metadata <- clean_metadata(metadata)
+metadata <- clean_metadata(metadata) %>% as_tibble() %>% 
+  mutate(cert_date = dmy(cert_date)) 
+  
