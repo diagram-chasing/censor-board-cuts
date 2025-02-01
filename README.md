@@ -9,8 +9,8 @@ This project consists of two main components:
 
 ## Preview Data
 
-- [Modifications](https://flatgithub.com/diagram-chasing/censor-board-cuts?filename=data%252Fmodifications.csv)
-- [Certifications](https://flatgithub.com/diagram-chasing/censor-board-cuts?filename=data%252Fmetadata.csv)
+- [Modifications](https://flatgithub.com/diagram-chasing/censor-board-cuts?filename=data%2Fmodifications.csv&sha=master)
+- [Certifications](https://flatgithub.com/diagram-chasing/censor-board-cuts?filename=data%2Fmetadata.csv&sha=master)
 
 ## Data Collection
 
