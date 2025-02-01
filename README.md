@@ -24,7 +24,7 @@ The R scripts (data-scripts/analysis/) clean and process the raw data:
 - Standardizes duration formats and attempts to pull out timestamps from the descriptions.
 - Categorizes modifications based on type (audio, visual, deletion, etc.) and the basic type of content (violence, nudity, etc.).
 
-TODO:
+## TODO:
 
 - [ ] [Fetching IDs for a specific state+year](../../issues/1)
 - [ ] [Classifying types of media (movies, trailers, songs, etc.)](../../issues/2)
@@ -34,7 +34,7 @@ TODO:
 - [ ] Create a data dictionary documenting all fields.
 - [ ] Create a dashboard for exploring the data.
 
-Related projects:
+## Related projects:
 
 - https://github.com/harman28/cbfc
 - https://github.com/ananddotiyer/MovieCertifications
