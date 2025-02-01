@@ -26,10 +26,10 @@ The R scripts (data-scripts/analysis/) clean and process the raw data:
 
 TODO:
 
-- [ ] Fetching IDs for a specific state+year.
-- [ ] Classifying types of media (movies, trailers, songs, etc.).
-- [ ] Cleaner descriptions of modifications.
+- [ ] Fetching IDs for a specific state+year (#1).
+- [ ] Classifying types of media (movies, trailers, songs, etc.) (#2).
+- [ ] Cleaner descriptions of modifications (#3).
+- [ ] Create summary statistics and visualizations (#4).
 - [ ] Better content classification.
-- [ ] Create summary statistics and visualizations.
 - [ ] Create a data dictionary documenting all fields.
 - [ ] Create a dashboard for exploring the data.
