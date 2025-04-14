@@ -7,29 +7,37 @@ library(stringr)
 library(purrr)
 
 options(scipen=999)
-options(datatable.allow.cartesian = TRUE) 
+options(datatable.allow.cartesian = TRUE)
+
+# --- Configuration ---
 raw_modifications_path <- '../../data/raw/modifications.csv'
 raw_metadata_path <- '../../data/raw/metadata.csv'
-output_cleaned_path <- "../../data/censorship_data_cleaned.parquet"
+
+base_output_dir <- "../../data"
+site_data_dir <- file.path(base_output_dir, "site_data")
+
+cleaned_mods_output_path <- file.path(base_output_dir, "modifications_cleaned.csv")
+cleaned_meta_output_path <- file.path(base_output_dir, "metadata_cleaned.csv")
+complete_data_csv_path <- file.path(base_output_dir, "complete_data.csv")
+site_data_parquet_path <- file.path(site_data_dir, "censorship_data_cleaned.parquet")
+last_n_csv_path <- file.path(site_data_dir, "last_n_records.csv")
+last_n_count <- 500 # Number of unique movies/certificates
+
 
 #' Cleans basic metadata columns. Standardizes ID to character, trimmed, leading zeros removed.
 #'
 #' @param df Dataframe containing metadata. Assumes data.table format.
 #' @return Dataframe with cleaned metadata columns.
 clean_metadata <- function(df) {
-  setDT(df) # Convert to data.table by reference
+  setDT(df)
   
   if ("id" %in% names(df)) {
-    # Ensure character, trim whitespace, remove leading zeros (preserving "0")
     if(!is.character(df$id)) df[, id := as.character(id)]
     df[, id := str_trim(id)]
-    # Remove leading zeros carefully: sub("^0+", "", "0") yields "", so handle "0" explicitly
     df[, id := fifelse(id == "0", "0", sub("^0+", "", id))]
-    # Handle potential NAs introduced if original was NA
     df[is.na(id), id := NA_character_]
   } else {
     warning("Column 'id' not found in metadata.")
-    # Consider adding an empty NA column if needed downstream, but join will fail anyway
   }
   
   # --- Clean and calculate duration_mins ---
@@ -76,8 +84,12 @@ clean_metadata <- function(df) {
   # Ensure cert_date is handled correctly if present (used later)
   if ("cert_date" %in% names(df)) {
     if (!inherits(df$cert_date, "Date")) {
-      # Attempt parsing, create placeholder if it fails
-      df[, cert_date_parsed := suppressWarnings(dmy(cert_date))]
+      
+      df[, cert_date_parsed := fcoalesce(
+        suppressWarnings(dmy(cert_date)),
+        suppressWarnings(ymd(cert_date)),
+        suppressWarnings(mdy(cert_date))
+      )]
       if(any(is.na(df$cert_date_parsed) & !is.na(df$cert_date) & df$cert_date != "" )) {
         warning("Some non-empty certificate dates in metadata could not be parsed to Date format.")
       }
@@ -105,17 +117,13 @@ clean_modifications <- function(df, description_col = "description") {
     stop(paste("Column '", description_col, "' not found in the dataframe."))
   }
   
-  # Ensure input is a data.table
   if (!is.data.table(df)) {
     setDT(df)
   }
   
-  # --- Clean certificate_id ---
   if ("certificate_id" %in% names(df)) {
-    # Ensure character, trim whitespace, remove leading zeros (preserving "0")
     if(!is.character(df$certificate_id)) df[, certificate_id := as.character(certificate_id)]
     df[, certificate_id := str_trim(certificate_id)]
-    # Remove leading zeros carefully
     df[, certificate_id := fifelse(certificate_id == "0", "0", sub("^0+", "", certificate_id))]
     df[is.na(certificate_id), certificate_id := NA_character_]
   } else {
@@ -195,7 +203,7 @@ clean_modifications <- function(df, description_col = "description") {
       text <- as.character(text) # Ensure character
       text_clean <- tolower(text)
       matched_tags <- names(patterns)[map_lgl(patterns, ~ grepl(.x, text_clean, ignore.case = TRUE, perl = TRUE))]
-      if(length(matched_tags) == 0) return("") #
+      if(length(matched_tags) == 0) return("") # Return empty string not NA
       paste(sort(matched_tags), collapse = "; ")
     }, USE.NAMES = FALSE)
   }
@@ -256,8 +264,7 @@ clean_modifications <- function(df, description_col = "description") {
         secs = suppressWarnings(as.numeric(secs_str))
         fifelse(is.na(mins) | is.na(secs), 0, mins + secs/60)
       },
-      # Format: Plain number (assume seconds if > 1000, else minutes)
-      # Be cautious with this assumption - may need refinement based on data patterns
+      # Handles cases like "120" (assume seconds if > 1000, else minutes)
       grepl("^\\d+(\\.\\d+)?$", time_char), {
         num_val = suppressWarnings(as.numeric(time_char))
         # Heuristic: if > 1000, likely seconds; otherwise, assume minutes.
@@ -280,7 +287,7 @@ clean_modifications <- function(df, description_col = "description") {
   # Calculate total modified time (handle potential NAs in calculated mins)
   df[, total_modified_time_mins := round(fifelse(is.na(deleted_mins), 0, deleted_mins) +
                                            fifelse(is.na(replaced_mins), 0, replaced_mins) +
-                                           fifelse(is.na(inserted_mins), 0, inserted_mins), 2)]
+                                           fifelse(is.na(inserted_mins), 0, inserted_mins), 2)] # Note: Added inserted here, check if intended
   
   # Remove original time columns if they exist
   if ("deleted" %in% names(df)) df[, deleted := NULL]
@@ -296,10 +303,8 @@ clean_modifications <- function(df, description_col = "description") {
 #' @param df Dataframe. Assumes data.table format.
 #' @return Dataframe with cleaned columns.
 clean_embedded_content <- function(df) {
-  # Assume df is already a data.table
-  result <- copy(df) # Work on a copy
+  result <- copy(df)
   
-  # Ensure key text columns exist and are character type
   cols_to_ensure_char <- c("film_name_full", "description", "language", "cleaned_description", "film_name")
   for(col in cols_to_ensure_char) {
     if (col %in% names(result)) {
@@ -350,7 +355,6 @@ clean_embedded_content <- function(df) {
   }
   
   
-  # --- Language Extraction (Revised Logic) ---
   # Use existing 'language' column first. If missing, try extracting from 'film_name_full'.
   result[, primary_language := NA_character_] # Initialize
   
@@ -362,23 +366,27 @@ clean_embedded_content <- function(df) {
   # If primary_language is still NA, try extracting from film_name_full
   if ("film_name_full" %in% names(result)) {
     result[is.na(primary_language), primary_language := {
+      # Subset only the rows where primary_language is currently NA
       fnf_sub <- film_name_full[is.na(primary_language)]
-      if(length(fnf_sub) == 0) {
-        # If no rows need processing, return vector of NAs of correct length
-        rep(NA_character_, length(is.na(primary_language)))
+      # If no rows need processing, return an empty vector or NAs of correct length
+      if (length(fnf_sub) == 0) {
+        rep(NA_character_, sum(is.na(primary_language))) # Return NAs for the subset rows
       } else {
         lang_pattern <- "\\(([^()]+?)(?:\\s+WITH\\s+.*?)?\\)" # Pattern to find text in parentheses
         extracted <- str_match(fnf_sub, lang_pattern)
-        potential_lang <- fifelse(!is.na(extracted[, 2]), str_trim(extracted[, 2]), NA_character_)
+        # Use extracted[, 2] safely, checking for NA first
+        potential_lang <- fifelse(!is.na(extracted[, 1]), str_trim(extracted[, 2]), NA_character_)
         
-        # Heuristics to filter out non-language entries (e.g., format, subtitles info)
+        # Heuristics to filter out non-language entries
         is_likely_format_or_other <- grepl("\\d|format|color|&|\\b(2d|3d|scope|screen|b/w|with|subtitle|english subtitle|don't love|part|ver|version)\\b",
                                            potential_lang, ignore.case = TRUE) | nchar(potential_lang) > 20 # Also filter long strings
         
+        # Ensure we only assign values where potential_lang is not NA and not likely format/other
         fifelse(!is.na(potential_lang) & !is_likely_format_or_other, potential_lang, NA_character_)
       }
     }]
   }
+  
   
   # Final cleanup for language columns (convert to factor later in main workflow)
   if ("primary_language" %in% names(result)) {
@@ -393,16 +401,15 @@ clean_embedded_content <- function(df) {
 }
 
 
-#' Main function to orchestrate data cleaning, joining, and saving.
+#' Main function to orchestrate data cleaning, joining.
 #'
 #' @param modifications_raw_df Raw modifications data.table.
 #' @param metadata_raw_df Raw metadata data.table.
-#' @param output_cleaned_path Path to save the final cleaned Parquet file.
 #' @return A list containing:
 #'   - final_data: The main cleaned and joined data.table.
 #'   - cleaned_meta: The cleaned metadata data.table (before join).
 #'   - cleaned_mods: The cleaned modifications data.table (before join).
-main <- function(modifications_raw_df, metadata_raw_df, output_cleaned_path) {
+main <- function(modifications_raw_df, metadata_raw_df) { # Removed output_cleaned_path argument
   
   print("Performing initial cleaning on metadata...")
   metadata_cleaned <- clean_metadata(metadata_raw_df) # Pass the raw df
@@ -426,7 +433,7 @@ main <- function(modifications_raw_df, metadata_raw_df, output_cleaned_path) {
     num_cols_to_add <- c("deleted_mins", "replaced_mins", "inserted_mins", "total_modified_time_mins")
     for(nc in num_cols_to_add) if(!nc %in% names(modifications_cleaned)) modifications_cleaned[, (nc) := 0]
   } else {
-    modifications_cleaned <- clean_modifications(modifications_raw_df, description_col = "description") # Pass the raw df
+    modifications_cleaned <- clean_modifications(modifications_raw_df, description_col = "description")
   }
   
   # ID columns should now be clean character strings from the cleaning functions.
@@ -446,7 +453,6 @@ main <- function(modifications_raw_df, metadata_raw_df, output_cleaned_path) {
   }
   
   # Define columns to select from each table for the join
-  # Prioritize columns less likely to cause type issues in join itself
   cols_from_meta_minimal <- c("id", "film_name", "film_name_full", "language", "duration_mins",
                               "cert_date_parsed", "cert_no", "category", "format", "applicant", "certifier")
   cols_from_meta_exist <- intersect(cols_from_meta_minimal, names(metadata_cleaned))
@@ -460,7 +466,7 @@ main <- function(modifications_raw_df, metadata_raw_df, output_cleaned_path) {
     metadata_cleaned[, ..cols_from_meta_exist],
     by.x = "certificate_id",
     by.y = "id",
-    all.x = TRUE # Keep all modification rows, fill metadata with NA if no match
+    all.x = TRUE
   )
   print(paste("Rows after join:", nrow(censorship_data)))
   
@@ -480,10 +486,18 @@ main <- function(modifications_raw_df, metadata_raw_df, output_cleaned_path) {
       # Check if column exists before trying to access
       if(col %in% names(censorship_data)) {
         censorship_data[, (col) := {
-          vals <- na.omit(get(col)) # Get all non-NA values for this column within the group
-          # If there's at least one non-NA value, use the first one; otherwise, keep NA
-          # Use .SD[[col]][1] to preserve the original type if all were NA
-          if (length(vals) > 0) vals[[1]] else .SD[[col]][1]
+          # Ensure the column exists in .SD before accessing
+          if(col %in% names(.SD)){
+            vals <- na.omit(.SD[[col]]) # Get all non-NA values for this column within the group
+            if (length(vals) > 0) vals[[1]] else .SD[[col]][1] # Take first non-NA or the first value (which might be NA)
+          } else {
+            # Assign NA of the appropriate type if column is missing in .SD (should not happen with by=)
+            if (is.numeric(censorship_data[[col]])) NA_real_ else
+              if (is.character(censorship_data[[col]])) NA_character_ else
+                if (is.factor(censorship_data[[col]])) factor(NA) else
+                  if (inherits(censorship_data[[col]], "Date")) as.Date(NA) else NA
+          }
+          
         }, by = certificate_id]
       }
     }
@@ -495,12 +509,14 @@ main <- function(modifications_raw_df, metadata_raw_df, output_cleaned_path) {
   # Rows that are identical across certificate ID and the *cleaned* modification description
   print("Removing duplicate modification rows (same certificate_id and cleaned_description)...")
   if ("certificate_id" %in% names(censorship_data) && "cleaned_description" %in% names(censorship_data)) {
-    # Handle cases where cleaned_description might be NA - treat NA as a distinct value for uniqueness
-    # Replace NA temporarily for `unique` check if needed, or rely on data.table handling
-    # data.table unique treats NA as distinct by default
+    
     original_rows <- nrow(censorship_data)
     dedup_cols <- c("certificate_id", "cleaned_description")
-    censorship_data <- unique(censorship_data, by = dedup_cols)
+    # Handle potential NA in cleaned_description for grouping uniqueness
+    censorship_data[, cleaned_description_temp := fifelse(is.na(cleaned_description), "__NA_PLACEHOLDER__", cleaned_description)]
+    censorship_data <- unique(censorship_data, by = c("certificate_id", "cleaned_description_temp"))
+    censorship_data[, cleaned_description_temp := NULL] # Remove temporary column
+    
     rows_removed <- original_rows - nrow(censorship_data)
     print(paste("Removed", rows_removed, "duplicate modification rows."))
   } else {
@@ -514,37 +530,47 @@ main <- function(modifications_raw_df, metadata_raw_df, output_cleaned_path) {
     "primary_language",
     "duration_mins",
     "mod_tags", "content_tags", "type_tags",
-    "description", # Keep original modification description
-    "cleaned_description", # Keep cleaned modification description
+    "description", # Keep original description for reference if needed
+    "cleaned_description",
     "cut_no", "deleted_mins", "replaced_mins", "inserted_mins", "total_modified_time_mins",
     "cert_date_parsed", "cert_no",
-    # "category", "format", # Explicitly excluding these as per original script
+    "category", "format", # Added Category and Format back
     "applicant", "certifier"
-    # "has_embedded_table" # Excluded as likely intermediate flag
+    
   )
-  # Select only columns that actually exist in the dataframe
   final_cols_exist <- intersect(final_cols_desired, names(censorship_data))
   censorship_data <- censorship_data[, ..final_cols_exist]
   
   
-  # Rename date column for clarity
+  # Rename columns to final desired names
   if ("cert_date_parsed" %in% names(censorship_data)) {
     setnames(censorship_data, "cert_date_parsed", "cert_date")
+  }
+  if ("film_base_name" %in% names(censorship_data)) {
     setnames(censorship_data, "film_base_name", "film_name")
+  }
+  if ("primary_language" %in% names(censorship_data)) {
     setnames(censorship_data, "primary_language", "language")
   }
   
   
-  # Convert specific columns to factor (final check)
-  factor_cols <- c("mod_tags", "content_tags", "type_tags", "language", "primary_language") 
+  # Convert specific columns to factors (after consolidation and renaming)
+  factor_cols <- c("mod_tags", "content_tags", "type_tags", "language", "category", "format")
   for (col in factor_cols) {
     if (col %in% names(censorship_data)) {
       # Check if not already factor and has non-NA values before converting
       if (!is.factor(censorship_data[[col]]) && any(!is.na(censorship_data[[col]]))) {
+        # Convert empty strings to NA before factor conversion
+        censorship_data[get(col) == "", (col) := NA_character_]
         censorship_data[, (col) := as.factor(get(col))]
+      } else if (is.factor(censorship_data[[col]])) {
+        # If already factor, ensure empty strings are treated as NA levels if needed
+        levels(censorship_data[[col]])[levels(censorship_data[[col]]) == ""] <- NA
       } else if (all(is.na(censorship_data[[col]]))) {
         # If all NA, ensure it's character NA before potential factor conversion attempt
-        censorship_data[, (col) := NA_character_]
+        if (!is.factor(censorship_data[[col]])) { # Avoid re-applying if already factor
+          censorship_data[, (col) := factor(get(col), levels=c())] # Create factor with 0 levels if all NA
+        }
       }
     }
   }
@@ -558,35 +584,36 @@ main <- function(modifications_raw_df, metadata_raw_df, output_cleaned_path) {
         # Attempt conversion, coerce errors to NA
         censorship_data[, (col) := suppressWarnings(as.numeric(get(col)))]
       }
+      # Ensure NAs are represented correctly (e.g., not 0 if they were NA)
+      censorship_data[is.nan(get(col)), (col) := NA_real_] # Convert NaN to NA
     }
   }
   
   # Ensure date type
   if ("cert_date" %in% names(censorship_data) && !inherits(censorship_data$cert_date, "Date")) {
-    warning("Final 'cert_date' column is not Date type. Check parsing.")
+    warning("Final 'cert_date' column is not Date type after processing. Check parsing and consolidation steps.")
+    # Attempt conversion again just in case consolidation reverted it
+    censorship_data[, cert_date := suppressWarnings(as.Date(cert_date))]
   }
   
   
-  # Filter based on duration to KEEP ONLY MOVIES
+  # Filter based on duration to KEEP ONLY MOVIES (duration >= 60 mins or NA)
   if ("duration_mins" %in% names(censorship_data)) {
     original_rows_filter <- nrow(censorship_data)
+    # Filter: Keep rows where duration is NA OR duration is >= 60
     censorship_data <- censorship_data[is.na(duration_mins) | duration_mins >= 60]
     rows_filtered <- original_rows_filter - nrow(censorship_data)
-    if(rows_filtered > 0) print(paste("Filtered out", rows_filtered, "rows with duration_mins <= 1."))
+    if(rows_filtered > 0) print(paste("Filtered out", rows_filtered, "rows with duration_mins < 60 (likely not movies)."))
+  } else {
+    warning("'duration_mins' column not found. Cannot filter by duration.")
   }
   
-  print("Saving final processed data...")
-  output_dir <- dirname(output_cleaned_path)
-  if (!dir.exists(output_dir)) {
-    print(paste("Creating output directory:", output_dir))
-    dir.create(output_dir, recursive = TRUE)
-  }
+  print("Main processing complete. Returning cleaned dataframes.")
   
-  # Check for list columns before saving (shouldn't happen with data.table ops)
+  # Check for list columns before returning (shouldn't happen with data.table ops)
   list_cols <- names(which(sapply(censorship_data, is.list)))
   if(length(list_cols) > 0) {
-    warning("List columns found before saving: ", paste(list_cols, collapse=", "), ". This is unexpected. Check data processing steps.")
-    # Attempt basic conversion to character string
+    warning("List columns found in final_data before returning: ", paste(list_cols, collapse=", "), ". Attempting conversion.")
     for(col in list_cols) {
       censorship_data[, (col) := sapply(get(col), function(x) {
         if(is.null(x) || length(x) == 0) return(NA_character_)
@@ -595,30 +622,7 @@ main <- function(modifications_raw_df, metadata_raw_df, output_cleaned_path) {
     }
   }
   
-  tryCatch({
-    print(paste("Attempting to save Parquet to:", output_cleaned_path))
-    write_parquet(censorship_data, output_cleaned_path, compression = "zstd", compression_level = 5)
-    print(paste("Cleaned data saved successfully as Parquet to:", output_cleaned_path))
-  }, error = function(e) {
-    print(paste("Error saving Parquet file:", e$message))
-    warning("Failed to save the final data as Parquet.")
-  })
-  
-  # Derive CSV path from Parquet path
-  output_csv_path <- sub("\\.parquet$", ".csv", output_cleaned_path)
-  tryCatch({
-    print(paste("Attempting to save CSV to:", output_csv_path))
-    # Use fwrite for efficiency with data.tables
-    fwrite(censorship_data, output_csv_path, row.names = FALSE, na = "") # Write NA as empty string
-    print(paste("Cleaned data saved successfully as CSV to:", output_csv_path))
-  }, error = function(e) {
-    print(paste("Error saving CSV file:", e$message))
-    warning("Failed to save the final data as CSV.")
-  })
-  
-  
-  print("Workflow complete.")
-  # Return a list containing key data frames for debugging
+  # Return the list of key dataframes
   return(list(
     final_data = censorship_data,
     cleaned_meta = metadata_cleaned,
@@ -627,33 +631,148 @@ main <- function(modifications_raw_df, metadata_raw_df, output_cleaned_path) {
 }
 
 
+# --- Main Execution ---
+
 print("Loading raw data...")
 if (!file.exists(raw_modifications_path)) stop("Raw modifications file not found at:", raw_modifications_path)
 if (!file.exists(raw_metadata_path)) stop("Raw metadata file not found at:", raw_metadata_path)
 
 modifications_raw <- tryCatch({
-  fread(raw_modifications_path, colClasses=c(certificate_id="character"), na.strings = c("", "NA", "N/A"))
+  # Ensure certificate_id is read as character from the start
+  fread(raw_modifications_path, colClasses=list(character=c("certificate_id")), na.strings = c("", "NA", "N/A", "NULL"))
 }, error = function(e) {
   stop("Failed to load modifications data: ", e$message)
 })
 print(paste("Loaded", nrow(modifications_raw), "rows from modifications data."))
 
 metadata_raw <- tryCatch({
-  fread(raw_metadata_path, colClasses=c(id="character"), na.strings = c("", "NA", "N/A"))
+  # Ensure id is read as character from the start
+  fread(raw_metadata_path, colClasses=list(character=c("id")), na.strings = c("", "NA", "N/A", "NULL"))
 }, error = function(e) {
   stop("Failed to load metadata data: ", e$message)
 })
 print(paste("Loaded", nrow(metadata_raw), "rows from metadata data."))
 
-
+# Run the main processing function
 results_list <- main(
   modifications_raw_df = modifications_raw,
-  metadata_raw_df = metadata_raw,
-  output_cleaned_path = output_cleaned_path
+  metadata_raw_df = metadata_raw
+  # No output path needed here anymore
 )
 
+# --- Post-processing: Saving Files ---
 
-results_df <- results_list$final_data
+print("Starting file saving process...")
+
+# Create output directories if they don't exist
+if (!dir.exists(base_output_dir)) {
+  print(paste("Creating base output directory:", base_output_dir))
+  dir.create(base_output_dir, recursive = TRUE)
+}
+if (!dir.exists(site_data_dir)) {
+  print(paste("Creating site data directory:", site_data_dir))
+  dir.create(site_data_dir, recursive = TRUE)
+}
+
+# 1. Save cleaned modifications CSV
+tryCatch({
+  print(paste("Attempting to save cleaned modifications CSV to:", cleaned_mods_output_path))
+  fwrite(results_list$cleaned_mods, cleaned_mods_output_path, row.names = FALSE, na = "") # Write NA as empty string
+  print("Cleaned modifications data saved successfully as CSV.")
+}, error = function(e) {
+  print(paste("Error saving cleaned modifications CSV:", e$message))
+  warning("Failed to save cleaned modifications data as CSV.")
+})
+
+# 2. Save cleaned metadata CSV
+tryCatch({
+  print(paste("Attempting to save cleaned metadata CSV to:", cleaned_meta_output_path))
+  fwrite(results_list$cleaned_meta, cleaned_meta_output_path, row.names = FALSE, na = "") # Write NA as empty string
+  print("Cleaned metadata data saved successfully as CSV.")
+}, error = function(e) {
+  print(paste("Error saving cleaned metadata CSV:", e$message))
+  warning("Failed to save cleaned metadata data as CSV.")
+})
+
+# 3. Save complete joined and cleaned data CSV
+tryCatch({
+  print(paste("Attempting to save complete cleaned data CSV to:", complete_data_csv_path))
+  fwrite(results_list$final_data, complete_data_csv_path, row.names = FALSE, na = "") # Write NA as empty string
+  print("Complete cleaned data saved successfully as CSV.")
+}, error = function(e) {
+  print(paste("Error saving complete cleaned data CSV:", e$message))
+  warning("Failed to save complete cleaned data as CSV.")
+})
+
+# 4. Save complete joined and cleaned data Parquet (in site_data)
+# *** REQUIREMENT 1: This saves the COMPLETE final_data ***
+tryCatch({
+  print(paste("Attempting to save COMPLETE cleaned data Parquet to:", site_data_parquet_path))
+  # Ensure no slicing/subsetting is happening here
+  write_parquet(results_list$final_data, site_data_parquet_path, compression = "zstd", compression_level = 5)
+  print("Complete cleaned data saved successfully as Parquet in site_data.")
+}, error = function(e) {
+  print(paste("Error saving Parquet file to site_data:", e$message))
+  warning("Failed to save the final data as Parquet in site_data.")
+})
+
+# 5. Create and save the 'last N' MOVIES CSV (in site_data)
+# *** REQUIREMENT 2: Modified to select last N MOVIES (unique certificate_id) ***
+print(paste("Attempting to create and save last", last_n_count, "movies CSV..."))
+if ("cert_date" %in% names(results_list$final_data) && "certificate_id" %in% names(results_list$final_data)) {
+  # Ensure cert_date is Date type for sorting
+  if (!inherits(results_list$final_data$cert_date, "Date")) {
+    warning("'cert_date' is not in Date format. Attempting conversion before sorting.")
+    # Make a copy to avoid modifying the original results_list$final_data directly here
+    temp_final_data <- copy(results_list$final_data)
+    temp_final_data[, cert_date := suppressWarnings(as.Date(cert_date))]
+  } else {
+    temp_final_data <- results_list$final_data # Use directly if already Date
+  }
+  
+  # 1. Find the latest date for each unique certificate_id
+  #    Handle cases where certificate_id might be NA itself
+  latest_certs <- temp_final_data[!is.na(certificate_id),
+                                  .(latest_date = if(all(is.na(cert_date))) as.Date(NA) else max(cert_date, na.rm = TRUE)),
+                                  by = certificate_id]
+  
+  # 2. Sort these unique IDs by date (descending, NAs last)
+  setorder(latest_certs, -latest_date, na.last = TRUE)
+  
+  # 3. Select the top N unique certificate_ids
+  last_n_movie_ids <- head(latest_certs$certificate_id, last_n_count)
+  
+  if (length(last_n_movie_ids) > 0) {
+    # 4. Filter the original data (from results_list) for these selected IDs
+    #    Use the *original* results_list$final_data to ensure correct data types before saving
+    last_n_data_subset <- results_list$final_data[certificate_id %in% last_n_movie_ids]
+    
+    # Optional: Sort the final subset by date and then ID/cut_no for consistent output
+    if ("cut_no" %in% names(last_n_data_subset)) {
+      setorder(last_n_data_subset, -cert_date, certificate_id, cut_no, na.last = TRUE)
+    } else {
+      setorder(last_n_data_subset, -cert_date, certificate_id, na.last = TRUE)
+    }
+    
+    # 5. Save the subset
+    tryCatch({
+      actual_movies_saved <- length(unique(last_n_data_subset$certificate_id))
+      print(paste("Attempting to save data for the latest", actual_movies_saved, "movies (", nrow(last_n_data_subset), "rows) CSV to:", last_n_csv_path))
+      fwrite(last_n_data_subset, last_n_csv_path, row.names = FALSE, na = "") # Write NA as empty string
+      print(paste("Latest", actual_movies_saved, "movies data saved successfully as CSV in site_data."))
+    }, error = function(e) {
+      print(paste("Error saving last N movies CSV:", e$message))
+      warning("Failed to save the last N movies data as CSV.")
+    })
+  } else {
+    print("No valid certificate IDs found with dates to determine the last N movies.")
+  }
+  
+} else {
+  warning("Columns 'cert_date' and/or 'certificate_id' not found in the final data. Cannot create 'last N' certified movies file.")
+}
 
 
-# }
+print("Workflow complete.")
+
+# results_df <- results_list$final_data
