@@ -534,7 +534,6 @@ main <- function(modifications_raw_df, metadata_raw_df) { # Removed output_clean
     "cleaned_description",
     "cut_no", "deleted_mins", "replaced_mins", "inserted_mins", "total_modified_time_mins",
     "cert_date_parsed", "cert_no",
-    "category", "format", # Added Category and Format back
     "applicant", "certifier"
     
   )
@@ -775,4 +774,4 @@ if ("cert_date" %in% names(results_list$final_data) && "certificate_id" %in% nam
 
 print("Workflow complete.")
 
-# results_df <- results_list$final_data
+results_df <- results_list$final_data
