@@ -5,6 +5,9 @@ import subprocess
 import logging
 import argparse
 import time
+import warnings
+import join_and_process
+import process_descriptions
 from pathlib import Path
 
 # Configure logging
@@ -30,30 +33,30 @@ def run_script(script_path, script_name):
         # Log the output
         if result.stdout:
             for line in result.stdout.splitlines():
-                logger.info(f"{script_name} output: {line}")
+                logger.info(f"{script_name}: {line}")
         
         elapsed_time = time.time() - start_time
-        logger.info(f"Successfully completed {script_name} in {elapsed_time:.2f} seconds")
+        logger.info(f"Completed {script_name} in {elapsed_time:.2f}s")
         return True
     
     except subprocess.CalledProcessError as e:
-        logger.error(f"Error running {script_name}: {e}")
+        logger.error(f"Error in {script_name}: {e}")
         if e.stdout:
             for line in e.stdout.splitlines():
-                logger.info(f"{script_name} output: {line}")
+                logger.info(f"{script_name}: {line}")
         if e.stderr:
             for line in e.stderr.splitlines():
-                logger.error(f"{script_name} error: {line}")
+                logger.error(f"{script_name}: {line}")
         return False
     
     except Exception as e:
-        logger.error(f"Unexpected error running {script_name}: {e}")
+        logger.error(f"Unexpected error in {script_name}: {e}")
         return False
 
 def run_script_with_live_output(script_path, args, script_name):
     """Run a Python script with live console output for scripts with progress bars"""
     start_time = time.time()
-    logger.info(f"Starting {script_name} with visible progress updates...")
+    logger.info(f"Starting {script_name}...")
     
     try:
         # Don't capture output so it shows in the console in real-time
@@ -61,24 +64,25 @@ def run_script_with_live_output(script_path, args, script_name):
         result = subprocess.run(process_args, check=True)
         
         elapsed_time = time.time() - start_time
-        logger.info(f"Successfully completed {script_name} in {elapsed_time:.2f} seconds")
+        logger.info(f"Completed {script_name} in {elapsed_time:.2f}s")
         return True
     
     except subprocess.CalledProcessError as e:
-        logger.error(f"Error running {script_name}: {e}")
+        logger.error(f"Error in {script_name}: {e}")
         return False
     
     except Exception as e:
-        logger.error(f"Unexpected error running {script_name}: {e}")
+        logger.error(f"Unexpected error in {script_name}: {e}")
         return False
 
 def main():
     """Main function to orchestrate the data processing pipeline"""
     parser = argparse.ArgumentParser(description='Run the full data processing pipeline')
-    parser.add_argument('--skip-join', action='store_true', help='Skip the join_and_process.py step')
-    parser.add_argument('--skip-process', action='store_true', help='Skip the process_descriptions.py step')
-    parser.add_argument('--rebuild-log', action='store_true', help='Rebuild the processed IDs log from output file')
+    parser.add_argument('--skip-join', action='store_true', help='Skip the data joining step')
+    parser.add_argument('--skip-process', action='store_true', help='Skip the description processing step')
+    parser.add_argument('--rebuild-log', action='store_true', help='Rebuild processed IDs log from existing processed data')
     parser.add_argument('--limit', type=int, default=None, help='Limit the number of descriptions to process')
+    parser.add_argument('--force', action='store_true', help='Force processing even if files have not changed')
     parser.add_argument('--mock', action='store_true', help='Use mock responses for testing')
     
     args = parser.parse_args()
@@ -103,17 +107,24 @@ def main():
     pipeline_success = True
     start_time = time.time()
     
-    logger.info("=" * 80)
-    logger.info("Starting data processing pipeline")
-    logger.info("=" * 80)
+    logger.info("Censor Board Cuts Data Processing Pipeline")
+    logger.info("------------------------------------------")
     
-    # Step 1: Run join_and_process.py (if not skipped)
+    if args.rebuild_log:
+        logger.info("REBUILDING PROCESSED IDS LOG from existing processed data")
+        rebuild_log(processed_data_path)
+        return True
+
     if not args.skip_join:
-        if not join_script.exists():
-            logger.error(f"Join script not found at {join_script}")
-            return False
+        logger.info("Running data joining and cleaning...")
         
-        join_success = run_script(join_script, "join_and_process.py")
+        # Build command with force flag if provided
+        cmd = [sys.executable, str(join_script)]
+        if args.force:
+            cmd.append('--force')
+        
+        # Run join_and_process.py
+        join_success = subprocess.call(cmd) == 0
         pipeline_success = pipeline_success and join_success
         
         if not join_success:
@@ -126,7 +137,7 @@ def main():
             logger.error("Join and process step did not produce expected output. Pipeline halted.")
             return False
     else:
-        logger.info("Skipping join_and_process.py step")
+        logger.info("Skipping data joining (--skip-join flag used)")
     
     # Step 2: Run process_descriptions.py (if not skipped)
     if not args.skip_process:
@@ -160,13 +171,10 @@ def main():
             "--log", str(log_file_path)
         ])
         
-        # Use string conversion for any Path objects
         logger.info(f"Running process_descriptions.py with args: {' '.join(str(arg) for arg in process_args[1:])}")
         
         # Run the process_descriptions.py script
         try:
-            logger.info(f"Running process_descriptions.py with visible progress display")
-            
             # Use the special function for live output
             process_success = run_script_with_live_output(
                 process_script,
@@ -177,9 +185,7 @@ def main():
             if not process_success:
                 logger.error("Processing descriptions step failed")
                 pipeline_success = False
-            else:
-                logger.info("Successfully completed process_descriptions.py step")
-                
+            
         except Exception as e:
             logger.error(f"Unexpected error running process_descriptions.py: {e}")
             pipeline_success = False
@@ -188,12 +194,11 @@ def main():
     
     # Report overall pipeline status
     elapsed_time = time.time() - start_time
-    logger.info("=" * 80)
     if pipeline_success:
-        logger.info(f"Pipeline completed successfully in {elapsed_time:.2f} seconds")
+        logger.info("------------------------------------------")
+        logger.info(f"Pipeline completed successfully in {elapsed_time:.2f}s")
     else:
-        logger.error(f"Pipeline completed with errors in {elapsed_time:.2f} seconds")
-    logger.info("=" * 80)
+        logger.error(f"Pipeline completed with errors in {elapsed_time:.2f}s")
     
     return pipeline_success
 

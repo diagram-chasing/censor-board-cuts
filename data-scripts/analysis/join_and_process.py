@@ -3,12 +3,15 @@ import pandas as pd
 import numpy as np
 import re
 import time
+import hashlib
+import json
 from datetime import datetime
 from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 import logging
 import warnings
+import argparse
 
 # Suppress specific warnings
 warnings.filterwarnings('ignore', category=FutureWarning, module='pandas.core.strings.object_array')
@@ -40,6 +43,85 @@ COMPLETE_DATA_CSV_PATH = os.path.join(BASE_OUTPUT_DIR, "complete_data.csv")
 SITE_DATA_PARQUET_PATH = os.path.join(SITE_DATA_DIR, "censorship_data_cleaned.parquet")
 LAST_N_CSV_PATH = os.path.join(SITE_DATA_DIR, "last_n_records.csv")
 LAST_N_COUNT = 500  # Number of unique movies/certificates
+
+# File for tracking data file hashes
+HASH_CACHE_PATH = os.path.join(BASE_OUTPUT_DIR, ".file_hashes.json")
+
+
+def calculate_file_hash(file_path):
+    """
+    Calculate MD5 hash of a file
+    
+    Args:
+        file_path: Path to the file
+        
+    Returns:
+        MD5 hash string of the file
+    """
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
+def should_skip_processing():
+    """
+    Check if processing can be skipped because input files haven't changed
+    
+    Returns:
+        Tuple of (bool, dict): Whether to skip processing, and current file hashes
+    """
+    if not os.path.exists(RAW_MODIFICATIONS_PATH) or not os.path.exists(RAW_METADATA_PATH):
+        return False, {}
+        
+    # Calculate current file hashes
+    current_hashes = {
+        "modifications": calculate_file_hash(RAW_MODIFICATIONS_PATH),
+        "metadata": calculate_file_hash(RAW_METADATA_PATH)
+    }
+    
+    # Load previous file hashes if they exist
+    if os.path.exists(HASH_CACHE_PATH):
+        try:
+            with open(HASH_CACHE_PATH, 'r') as f:
+                previous_hashes = json.load(f)
+                
+            # Check if output files exist
+            outputs_exist = (
+                os.path.exists(CLEANED_MODS_OUTPUT_PATH) and
+                os.path.exists(CLEANED_META_OUTPUT_PATH) and
+                os.path.exists(COMPLETE_DATA_CSV_PATH) and
+                os.path.exists(SITE_DATA_PARQUET_PATH) and
+                os.path.exists(LAST_N_CSV_PATH)
+            )
+            
+            # Check if hashes match
+            files_unchanged = (
+                current_hashes["modifications"] == previous_hashes.get("modifications", "") and
+                current_hashes["metadata"] == previous_hashes.get("metadata", "")
+            )
+            
+            if files_unchanged and outputs_exist:
+                return True, current_hashes
+                
+        except Exception as e:
+            logger.warning(f"Error reading hash cache: {str(e)}")
+    
+    return False, current_hashes
+
+def save_file_hashes(hashes):
+    """
+    Save file hashes to cache file
+    
+    Args:
+        hashes: Dictionary of file hashes
+    """
+    os.makedirs(os.path.dirname(HASH_CACHE_PATH), exist_ok=True)
+    try:
+        with open(HASH_CACHE_PATH, 'w') as f:
+            json.dump(hashes, f)
+    except Exception as e:
+        logger.warning(f"Error saving hash cache: {str(e)}")
 
 
 def safe_str_replace(series, pattern, replacement, regex=True):
@@ -428,10 +510,25 @@ def main():
     """
     Main function to orchestrate data cleaning, joining, and saving.
     """
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Process and join censor board data')
+    parser.add_argument('--force', action='store_true', help='Force processing even if files have not changed')
+    args = parser.parse_args()
+    
     start_time = time.time()
-    logger.info("=" * 80)
-    logger.info("Starting data processing pipeline")
-    logger.info("=" * 80)
+
+    
+    # Check if processing can be skipped
+    if not args.force:
+        should_skip, current_hashes = should_skip_processing()
+        if should_skip:
+            logger.info("Input files haven't changed since last run. Skipping processing.")
+            logger.info("Use --force to process anyway.")
+            return
+    else:
+        # Still calculate hashes if forcing
+        _, current_hashes = should_skip_processing()
+        logger.info("Forcing processing even though input files may not have changed.")
     
     # Check if raw files exist
     if not os.path.exists(RAW_MODIFICATIONS_PATH):
@@ -742,7 +839,10 @@ def main():
     logger.info("=" * 80)
     logger.info(f"Data processing completed in {total_elapsed:.2f} seconds")
     logger.info("=" * 80)
+    
+    # Save file hashes after successful processing
+    save_file_hashes(current_hashes)
 
 
 if __name__ == "__main__":
-    main() 
+    main()

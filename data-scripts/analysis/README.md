@@ -77,6 +77,12 @@ python main.py
   python main.py --rebuild-log
   ```
 
+- **Force processing** even if input files haven't changed:
+  ```bash
+  python main.py --force            # Force full processing
+  python join_and_process.py --force # Force just the join step
+  ```
+
 ### Individual Scripts
 
 You can also run each script individually:
@@ -111,6 +117,7 @@ The scripts use these default paths:
    - Cleans modification data (certificate IDs, time formats)
    - Joins the datasets
    - Outputs cleaned CSV files
+   - *Automatically skips processing if input files haven't changed*
 
 2. **Description Processing**:
    - Analyzes censorship descriptions using Gemini AI
@@ -125,4 +132,5 @@ The scripts use these default paths:
 
 - The `processed_ids.log` file is updated after each description is processed, allowing for safe interruption and resumption.
 - Use `--rebuild-log` if you have an existing processed_data.csv file but are missing the log file.
+- The `join_and_process.py` script uses file hashing to detect changes in input data files and skips processing if nothing has changed. Use `--force` to override this behavior.
 - The R script (`cleaning_script.R`) provides an alternative implementation of the data cleaning logic. 
