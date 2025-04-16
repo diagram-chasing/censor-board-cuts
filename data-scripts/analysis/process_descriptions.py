@@ -1,12 +1,23 @@
+#!/usr/bin/env python3
 import os
 import csv
 import json
 import pandas as pd
 import time
+import argparse
 from dotenv import load_dotenv
 import google.generativeai as genai
 from google.ai.generativelanguage_v1beta.types import content
 from tqdm import tqdm
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -120,7 +131,7 @@ def process_description(description, timeout=30):
         # Create a simple mock response for testing
         # This allows you to test the script without making API calls
         if os.environ.get("USE_MOCK_RESPONSE", "false").lower() == "true":
-            print("Using mock response for testing")
+            logger.info("Using mock response for testing")
             return create_mock_response(description)
         
         # Set a timeout for the API call
@@ -132,18 +143,18 @@ def process_description(description, timeout=30):
         try:
             response = chat_session.send_message(description)
             elapsed_time = time.time() - start_time
-            print(f"API call completed in {elapsed_time:.2f} seconds")
+            logger.debug(f"API call completed in {elapsed_time:.2f} seconds")
         except Exception as e:
-            print(f"API call failed: {e}")
+            logger.error(f"API call failed: {e}")
             return None
         
         if response and response.text:
             return json.loads(response.text)
         else:
-            print("Empty response from API")
+            logger.warning("Empty response from API")
             return None
     except Exception as e:
-        print(f"Error processing description: {e}")
+        logger.error(f"Error processing description: {e}")
         return None
 
 def create_mock_response(description):
@@ -239,7 +250,58 @@ def flatten_json_for_csv(json_data, original_row):
     
     return result_rows
 
-def process_csv(input_file, output_file, limit=None, use_mock=False):
+def get_processed_ids(processed_log_file):
+    """Read the processed IDs log file and return a set of processed (certificate_id, cut_no) tuples"""
+    processed_ids = set()
+    
+    if os.path.exists(processed_log_file):
+        try:
+            with open(processed_log_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        parts = line.split(',')
+                        if len(parts) >= 2:
+                            certificate_id, cut_no = parts[0], parts[1]
+                            processed_ids.add((certificate_id, str(cut_no)))
+                
+            logger.info(f"Loaded {len(processed_ids)} processed IDs from log file")
+        except Exception as e:
+            logger.error(f"Error reading processed IDs log file: {e}")
+    else:
+        logger.info(f"No processed IDs log file found at {processed_log_file}, starting fresh")
+    
+    return processed_ids
+
+def update_processed_id_log(processed_log_file, cert_id, cut_no):
+    """Append a single processed ID to the log file immediately"""
+    try:
+        with open(processed_log_file, 'a') as f:
+            f.write(f"{cert_id},{cut_no}\n")
+            f.flush()  # Ensure it's written to disk
+    except Exception as e:
+        logger.error(f"Error updating processed ID log file for {cert_id},{cut_no}: {e}")
+
+def extract_processed_ids_from_output(output_file):
+    """Extract all processed IDs from the output CSV file and update the log file"""
+    if not os.path.exists(output_file) or os.path.getsize(output_file) == 0:
+        logger.info(f"No output file found or file is empty: {output_file}")
+        return set()
+    
+    try:
+        df = pd.read_csv(output_file)
+        if 'certificate_id' in df.columns and 'cut_no' in df.columns:
+            processed_ids = set(zip(df['certificate_id'].astype(str), df['cut_no'].astype(str)))
+            logger.info(f"Extracted {len(processed_ids)} processed IDs from output file")
+            return processed_ids
+        else:
+            logger.warning(f"Output file {output_file} lacks 'certificate_id' or 'cut_no' columns")
+            return set()
+    except Exception as e:
+        logger.error(f"Error extracting processed IDs from output file: {e}")
+        return set()
+
+def process_csv(input_file, output_file, log_file=None, limit=None, use_mock=False, rebuild_log=False):
     """Process the CSV file and output the results to a new CSV file,
     saving incrementally and resuming if interrupted."""
     # Set environment variable for mock responses if needed
@@ -249,6 +311,36 @@ def process_csv(input_file, output_file, limit=None, use_mock=False):
         # Ensure mock response is disabled if not explicitly requested
         if "USE_MOCK_RESPONSE" in os.environ:
             del os.environ["USE_MOCK_RESPONSE"]
+
+    # Set default log file path if not provided
+    if log_file is None:
+        # Store log in the same directory as this script
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(current_dir, "processed_ids.log")
+    
+    # If rebuild_log flag is set, extract IDs from output file and rebuild log
+    if rebuild_log and os.path.exists(output_file):
+        logger.info("Rebuilding processed IDs log from output file...")
+        processed_ids = extract_processed_ids_from_output(output_file)
+        if processed_ids:
+            if os.path.exists(log_file):
+                # Backup the existing log file
+                backup_path = log_file + '.bak'
+                try:
+                    os.rename(log_file, backup_path)
+                    logger.info(f"Backed up existing log file to {backup_path}")
+                except Exception as e:
+                    logger.error(f"Error backing up log file: {e}")
+            
+            # Create a new log file with extracted IDs
+            with open(log_file, 'w') as f:
+                for cert_id, cut_no in processed_ids:
+                    f.write(f"{cert_id},{cut_no}\n")
+            
+            logger.info(f"Rebuilt log file with {len(processed_ids)} processed IDs")
+    else:
+        # Get already processed IDs from log file
+        processed_ids = get_processed_ids(log_file)
 
     # Define columns
     original_columns = [
@@ -264,75 +356,54 @@ def process_csv(input_file, output_file, limit=None, use_mock=False):
     ]
     columns_to_keep = original_columns + ai_columns
 
-    # Check for existing output and identify processed IDs
-    processed_ids = set()
-    if os.path.exists(output_file):
-        try:
-            # Check if file is empty before reading
-            if os.path.getsize(output_file) > 0:
-                existing_df = pd.read_csv(output_file)
-                # Ensure required columns exist for identification
-                if 'certificate_id' in existing_df.columns and 'cut_no' in existing_df.columns:
-                    processed_ids = set(zip(existing_df['certificate_id'], existing_df['cut_no']))
-                    print(f"Resuming: Found {len(processed_ids)} already processed unique (certificate_id, cut_no) pairs in {output_file}")
-                else:
-                    print(f"Warning: Output file {output_file} exists but lacks 'certificate_id' or 'cut_no'. Cannot resume reliably. Consider deleting it.")
-                    # Decide how to handle this - stop, delete, or process all? For now, process all.
-                    processed_ids = set()
-            else:
-                 print(f"Output file {output_file} exists but is empty. Starting fresh.")
-
-        except pd.errors.EmptyDataError:
-            print(f"Output file {output_file} is empty. Starting fresh.")
-        except Exception as e:
-            print(f"Error reading existing output file {output_file}: {e}. Cannot resume reliably. Consider deleting the file.")
-            # Decide how to handle this - stop, delete, or process all? For now, process all.
-            processed_ids = set()
-
     # Read the input CSV file
     try:
         df = pd.read_csv(input_file)
-        print(f"Successfully loaded input CSV with {len(df)} rows")
+        logger.info(f"Successfully loaded input CSV with {len(df)} rows")
     except Exception as e:
-        print(f"Error loading input CSV file: {e}")
+        logger.error(f"Error loading input CSV file: {e}")
         return
 
     # Filter out already processed rows
     original_row_count = len(df)
-    if not processed_ids:
-         df_to_process = df
-         print("No previously processed rows found or resuming is disabled.")
+    
     # Ensure id columns exist in input df before attempting to filter
-    elif 'certificate_id' in df.columns and 'cut_no' in df.columns:
+    if 'certificate_id' in df.columns and 'cut_no' in df.columns:
+        # Convert to string for consistent matching
+        df['certificate_id'] = df['certificate_id'].astype(str)
+        df['cut_no'] = df['cut_no'].astype(str)
+        
         df_to_process = df[~df.apply(lambda row: (row['certificate_id'], row['cut_no']) in processed_ids, axis=1)]
         processed_count = original_row_count - len(df_to_process)
         if processed_count > 0:
-            print(f"Skipping {processed_count} already processed rows based on (certificate_id, cut_no).")
+            logger.info(f"Skipping {processed_count} already processed rows based on (certificate_id, cut_no).")
         else:
-             print("No rows to skip based on existing output file.")
+            logger.info("No rows to skip based on log file.")
     else:
-        print("Warning: Input file lacks 'certificate_id' or 'cut_no'. Cannot filter based on existing output. Processing all rows.")
+        logger.warning("Input file lacks 'certificate_id' or 'cut_no'. Cannot filter based on log file. Processing all rows.")
         df_to_process = df
 
     if df_to_process.empty:
-        print("All necessary rows already processed.")
+        logger.info("All necessary rows already processed.")
         return # Exit if nothing to do
 
     # Limit the number of rows to process if specified (after filtering)
     if limit is not None: # Allow limit=0
         df_to_process = df_to_process.head(limit)
-        print(f"Processing limit applied: targeting {len(df_to_process)} rows for this run.")
+        logger.info(f"Processing limit applied: targeting {len(df_to_process)} rows for this run.")
 
     if df_to_process.empty and limit is not None:
-        print("No rows left to process after applying limit.")
+        logger.info("No rows left to process after applying limit.")
         return
-
 
     # Determine if header needs to be written
     write_header = not os.path.exists(output_file) or (os.path.exists(output_file) and os.path.getsize(output_file) == 0)
 
+    # Prepare to track newly processed IDs
+    newly_processed_ids = set()
+
     # Process each remaining row
-    print(f"Starting processing for {len(df_to_process)} rows...")
+    logger.info(f"Starting processing for {len(df_to_process)} rows...")
     for index, row in tqdm(df_to_process.iterrows(), total=len(df_to_process), desc="Processing descriptions"):
         # Get the description
         description = row.get('description', '')
@@ -376,33 +447,60 @@ def process_csv(input_file, output_file, limit=None, use_mock=False):
         try:
             batch_df.to_csv(output_file, mode='a', header=write_header, index=False, lineterminator='\n')
             write_header = False # Header is written only once
+            
+            # Track this ID as processed and update log file immediately
+            cert_id = str(row.get('certificate_id', ''))
+            cut_no = str(row.get('cut_no', ''))
+            if cert_id and cut_no:  # Only add valid IDs
+                newly_processed_ids.add((cert_id, cut_no))
+                # Update log file immediately after processing
+                update_processed_id_log(log_file, cert_id, cut_no)
+                
         except Exception as e:
             # Log error with identifying info if possible
             cert_id = row.get('certificate_id', 'UNKNOWN_ID')
             cut_num = row.get('cut_no', 'UNKNOWN_CUT')
-            print(f"Error writing batch to CSV for row (ID: {cert_id}, Cut: {cut_num}): {e}")
-            # Consider whether to stop or continue on write error
+            logger.error(f"Error writing batch to CSV for row (ID: {cert_id}, Cut: {cut_num}): {e}")
+            # Continue with next row
 
-    print(f"Finished processing. Results appended to {output_file}")
+    # We still keep a final log update in case we missed any for some reason
+    if newly_processed_ids:
+        logger.info(f"Processed {len(newly_processed_ids)} new rows. Results appended to {output_file}")
+    else:
+        logger.info(f"No new rows processed. Output file: {output_file}")
 
 if __name__ == "__main__":
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description='Process descriptions using AI and update CSV file')
+    parser.add_argument('--input', default=None, help='Path to input CSV file')
+    parser.add_argument('--output', default=None, help='Path to output CSV file')
+    parser.add_argument('--log', default=None, help='Path to processed IDs log file')
+    parser.add_argument('--limit', type=int, default=None, help='Limit the number of descriptions to process')
+    parser.add_argument('--mock', action='store_true', help='Use mock responses for testing')
+    parser.add_argument('--rebuild-log', action='store_true', help='Rebuild the processed IDs log from output file')
+    
+    args = parser.parse_args()
+    
     # Get the current directory
     current_dir = os.path.dirname(os.path.abspath(__file__))
-
-    # Define paths relative to the current directory
-    input_file = os.path.join(current_dir, "..", "..", "data", "complete_data.csv")
-    output_file = os.path.join(current_dir, "..", "..", "data", "processed_data.csv")
-
+    
+    # Define default paths relative to the current directory if not provided
+    input_file = args.input or os.path.join(current_dir, "..", "..", "data", "complete_data.csv")
+    output_file = args.output or os.path.join(current_dir, "..", "..", "data", "processed_data.csv")
+    log_file = args.log or os.path.join(current_dir, "processed_ids.log")  # Store log in analysis folder
+    
     # Check if the input file exists
     if not os.path.exists(input_file):
-        print(f"Error: Input file not found at {input_file}")
-        print("Current directory:", current_dir)
-        # Simple checks for troubleshooting path issues
-        # print("Available files in parent directory:", os.listdir(os.path.join(current_dir, "..")))
-        # print("Available files in parent's parent directory:", os.listdir(os.path.join(current_dir, "..", "..")))
+        logger.error(f"Error: Input file not found at {input_file}")
+        logger.info(f"Current directory: {current_dir}")
         exit(1)
-
+    
     # Process the CSV file
-    # Set use_mock=True for testing without API calls
-    # Set limit=N to process only N new rows (useful for testing)
-    process_csv(input_file, output_file, limit=None, use_mock=False) # Example: limit=10 
+    process_csv(
+        input_file=input_file, 
+        output_file=output_file, 
+        log_file=log_file, 
+        limit=args.limit, 
+        use_mock=args.mock, 
+        rebuild_log=args.rebuild_log
+    ) 

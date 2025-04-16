@@ -31,7 +31,7 @@ RAW_MODIFICATIONS_PATH = '../../data/raw/modifications.csv'
 RAW_METADATA_PATH = '../../data/raw/metadata.csv'
 
 # Changed back to the default output directories to match R script
-BASE_OUTPUT_DIR = "../../data/new_data"
+BASE_OUTPUT_DIR = "../../data/"
 SITE_DATA_DIR = os.path.join(BASE_OUTPUT_DIR, "site_data")
 
 CLEANED_MODS_OUTPUT_PATH = os.path.join(BASE_OUTPUT_DIR, "modifications_cleaned.csv")
