@@ -3,6 +3,10 @@ import logging
 import requests
 import uuid
 from pathlib import Path
+import urllib3
+
+# Disable SSL verification warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
@@ -15,6 +19,8 @@ def get_tokens(output_dir: str = None):
         output_path.mkdir(parents=True, exist_ok=True)
 
         session = requests.Session()
+        # Disable SSL verification
+        session.verify = False
         base_url = "https://www.ecinepramaan.gov.in/cbfc"
         
         # Common headers used across requests

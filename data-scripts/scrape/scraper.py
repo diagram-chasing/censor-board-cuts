@@ -5,10 +5,14 @@ import csv
 import logging
 import uuid
 import time
+import urllib3
 from typing import Dict, Optional, Tuple, List
 from bs4 import BeautifulSoup
 from datetime import datetime
 from pathlib import Path
+
+# Disable SSL verification warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,6 +24,8 @@ logger = logging.getLogger(__name__)
 class CBFCScraper:
     def __init__(self, cookies_dir: str = None):
         self.session = requests.Session()
+        # Disable SSL verification
+        self.session.verify = False
         self.base_url = "https://www.ecinepramaan.gov.in"
         
         # Get the directory containing the cookies and headers files
@@ -199,27 +205,77 @@ class CBFCScraper:
         headers_str = ' '.join([f"-H '{k}: {v}'" for k, v in headers.items()])
         return f"curl -X POST '{url}' {headers_str} -d '{payload}'"
 
+    def is_html_valid(self, html_content: str) -> bool:
+        """Check if HTML content is valid and contains necessary data"""
+        if not html_content or len(html_content) < 100:  # Too small to be valid
+            return False
+            
+        if "//OK" not in html_content:
+            return False
+        
+        if "This certificate does not exist in our database" in html_content:
+            return False
+            
+        return True
+            
+    def html_exists_and_valid(self, certificate_id: str) -> Tuple[bool, Optional[str]]:
+        """Check if HTML for the certificate ID exists and is valid"""
+        html_path = Path('data/raw/html') / f"{certificate_id}.html"
+        
+        if not html_path.exists():
+            return False, None
+            
+        try:
+            with open(html_path, 'r', encoding='utf-8') as f:
+                html_content = f.read()
+                
+            if self.is_html_valid(html_content):
+                logger.info(f"Using existing valid HTML for certificate ID: {certificate_id}")
+                return True, html_content
+            else:
+                logger.warning(f"Existing HTML for certificate ID {certificate_id} is invalid")
+                return False, None
+        except Exception as e:
+            logger.error(f"Error reading existing HTML for certificate ID {certificate_id}: {str(e)}")
+            return False, None
+
     def get_certificate_details(self, certificate_id: str) -> Optional[Dict]:
         """Fetch and parse certificate details for a given certificate ID"""
         try:
-            logger.debug(f"Fetching details for certificate ID: {certificate_id}")
+            # Check if valid HTML already exists
+            html_exists, existing_html = self.html_exists_and_valid(certificate_id)
             
-            url = f"{self.base_url}/cbfc/cbfc/certificate/qrRedirect/client/QRRedirect"
-            payload = f'7|0|6|{self.base_url}/cbfc/cbfc.Cbfc/|A425282E16D492E942BAD73170B377F8|cbfc.certificate.qrRedirect.shared.QRRedirect_Srv|getDefaultValues|java.lang.String/2004016611|{certificate_id}|1|2|3|4|1|5|6|'
-            
-            logger.debug("Equivalent curl command:")
-            logger.debug(self._to_curl(url, payload))
-            
-            response = self.session.post(url, data=payload)
-            response.raise_for_status()
-            logger.debug(response.text)
-            
-            if "//OK" not in response.text:
-                logger.error(f"Certificate ID {certificate_id}: Did not receive OK response")
-                logger.debug(f"Response content: {response.text[:500]}")  # Log first 500 chars
-                return None
+            if not html_exists:
+                logger.debug(f"Fetching details for certificate ID: {certificate_id}")
                 
-            data_parts = response.text.split('//OK')[1].strip()
+                url = f"{self.base_url}/cbfc/cbfc/certificate/qrRedirect/client/QRRedirect"
+                payload = f'7|0|6|{self.base_url}/cbfc/cbfc.Cbfc/|A425282E16D492E942BAD73170B377F8|cbfc.certificate.qrRedirect.shared.QRRedirect_Srv|getDefaultValues|java.lang.String/2004016611|{certificate_id}|1|2|3|4|1|5|6|'
+                
+                logger.debug("Equivalent curl command:")
+                logger.debug(self._to_curl(url, payload))
+                
+                response = self.session.post(url, data=payload)
+                response.raise_for_status()
+                logger.debug(response.text)
+                
+                # Save the raw HTML response
+                html_dir = Path('data/raw/html')
+                html_dir.mkdir(parents=True, exist_ok=True)
+                html_file = html_dir / f"{certificate_id}.html"
+                with open(html_file, 'w', encoding='utf-8') as f:
+                    f.write(response.text)
+                logger.info(f"Saved raw HTML for certificate ID: {certificate_id}")
+                
+                if "//OK" not in response.text:
+                    logger.error(f"Certificate ID {certificate_id}: Did not receive OK response")
+                    logger.debug(f"Response content: {response.text[:500]}")  # Log first 500 chars
+                    return None
+                    
+                data_parts = response.text.split('//OK')[1].strip()
+            else:
+                # Use existing valid HTML
+                data_parts = existing_html.split('//OK')[1].strip()
+            
             parsed_data = eval(data_parts)
             
             certificate_info = self.extract_main_data(parsed_data)
@@ -255,29 +311,80 @@ class CBFCScraper:
         output_dir = Path('data/raw')
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Load progress
-        last_processed_id = self._load_progress(output_dir)
-        if last_processed_id:
+        # Load completed IDs (separate from progress tracking)
+        completed_file = output_dir / 'completed.json'
+        completed_ids = set()
+        if completed_file.exists():
             try:
-                start_idx = certificate_ids.index(last_processed_id) + 1
-                remaining_ids = certificate_ids[start_idx:]
+                with open(completed_file, 'r') as f:
+                    completed_ids = set(json.load(f))
+            except Exception as e:
+                logger.error(f"Error loading completed IDs: {str(e)}")
+        
+        # Update remaining_ids to exclude already completed ones
+        remaining_ids = [cert_id for cert_id in certificate_ids if cert_id not in completed_ids]
+        
+        # Check if there are any certificates left to process after filtering
+        if len(remaining_ids) != len(certificate_ids):
+            logger.info(f"Skipping {len(certificate_ids) - len(remaining_ids)} already processed certificates")
+        
+        if not remaining_ids:
+            logger.info("All certificate IDs in this batch have already been processed")
+            return metadata_records, modification_records
+        
+        # Load progress (for resumption within a batch)
+        last_processed_id = self._load_progress(output_dir)
+        if last_processed_id and last_processed_id in remaining_ids:
+            try:
+                start_idx = remaining_ids.index(last_processed_id) + 1
+                remaining_ids = remaining_ids[start_idx:]
             except ValueError:
-                remaining_ids = certificate_ids
-        else:
-            remaining_ids = certificate_ids
+                pass  # If not found, process all remaining
         
         logger.info(f"Resuming from after ID: {last_processed_id}")
         logger.info(f"Remaining certificates to process: {len(remaining_ids)}")
         
+        # Further filter out IDs that already have valid HTML files
+        filtered_ids = []
+        for cert_id in remaining_ids:
+            exists, _ = self.html_exists_and_valid(cert_id)
+            if not exists:
+                filtered_ids.append(cert_id)
+            else:
+                # If HTML exists but certificate not marked as completed,
+                # we should still process it to extract the data
+                if cert_id not in completed_ids:
+                    filtered_ids.append(cert_id)
+                    logger.info(f"HTML exists for {cert_id} but not marked as completed. Will process.")
+
+        skipped_count = len(remaining_ids) - len(filtered_ids)
+        if skipped_count > 0:
+            logger.info(f"Skipping {skipped_count} certificates that already have valid HTML files and are completed")
+
+        remaining_ids = filtered_ids
+        
         metadata_path = output_dir / 'metadata.csv'
         modifications_path = output_dir / 'modifications.csv'
         
-        # Define fixed set of columns
-        metadata_fields = [
+        # Define base set of columns
+        base_metadata_fields = [
             'id', 'title', 'category', 'language', 'format', 'duration',
             'applicant', 'certifier', 'synopsis', 'file_no', 'film_name_full',
             'cert_no', 'cert_date', 'final_duration'
         ]
+        
+        # Get all metadata fields including credit fields from existing CSV
+        if metadata_path.exists():
+            try:
+                with open(metadata_path, 'r', newline='', encoding='utf-8') as f:
+                    reader = csv.reader(f)
+                    header = next(reader)
+                    metadata_fields = header
+            except Exception as e:
+                logger.error(f"Error reading metadata CSV header: {str(e)}")
+                metadata_fields = base_metadata_fields
+        else:
+            metadata_fields = base_metadata_fields
         
         modification_fields = [
             'certificate_id', 'film_name', 'cut_no', 'description',
@@ -299,18 +406,45 @@ class CBFCScraper:
                 # Separate modifications from metadata
                 modifications = result.pop('modifications', [])
                 
+                # Update metadata fields with any new fields found in this certificate
+                new_fields = [key for key in result.keys() if key not in metadata_fields]
+                if new_fields:
+                    metadata_fields.extend(new_fields)
+                    logger.info(f"Added {len(new_fields)} new fields to metadata: {', '.join(new_fields)}")
+                
                 # Ensure all required fields exist
                 for field in metadata_fields:
                     if field not in result:
                         result[field] = ''
                 
-                # Write metadata to CSV
-                write_header = not metadata_path.exists()
-                with open(metadata_path, 'a', newline='', encoding='utf-8') as metadata_file:
-                    metadata_writer = csv.DictWriter(metadata_file, fieldnames=metadata_fields)
-                    if write_header:
-                        metadata_writer.writeheader()
-                    metadata_writer.writerow(result)
+                # Write metadata to CSV - if new fields were added, rewrite the entire file
+                if new_fields and metadata_path.exists():
+                    # Read existing data
+                    existing_data = []
+                    with open(metadata_path, 'r', newline='', encoding='utf-8') as f:
+                        reader = csv.DictReader(f)
+                        for row in reader:
+                            # Add empty values for new fields
+                            for field in new_fields:
+                                row[field] = ''
+                            existing_data.append(row)
+                    
+                    # Write everything back with new header
+                    with open(metadata_path, 'w', newline='', encoding='utf-8') as f:
+                        writer = csv.DictWriter(f, fieldnames=metadata_fields)
+                        writer.writeheader()
+                        for row in existing_data:
+                            writer.writerow(row)
+                        writer.writerow(result)
+                else:
+                    # Normal append operation
+                    write_header = not metadata_path.exists()
+                    with open(metadata_path, 'a', newline='', encoding='utf-8') as f:
+                        writer = csv.DictWriter(f, fieldnames=metadata_fields)
+                        if write_header:
+                            writer.writeheader()
+                        writer.writerow(result)
+                
                 metadata_records.append(result)
                 
                 # Handle modifications if present
@@ -339,12 +473,19 @@ class CBFCScraper:
                 # Log progress
                 logger.info(f"Processed certificate ID: {cert_id}")
                 
+                # Update completed ids
+                completed_ids.add(cert_id)
+                with open(completed_file, 'w') as f:
+                    json.dump(list(completed_ids), f)
+                
                 # After successful processing and saving to CSV:
                 with open(output_dir / 'progress.json', 'w') as f:
                     json.dump({'last_id': cert_id}, f)
                 
             except Exception as e:
                 logger.error(f"Error processing certificate ID {cert_id}: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
                 continue
         
         logger.info(f"Processed {len(metadata_records)} certificates with {len(modification_records)} modifications")

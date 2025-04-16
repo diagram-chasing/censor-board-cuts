@@ -1,7 +1,5 @@
 __pycache__/
 
-data-scripts/scrape/cookies.json
-data-scripts/scrape/headers.json
 .Rproj.user/
 .Rhistory
 .Rprofile
@@ -11,5 +9,11 @@ data-scripts/scrape/headers.json
 .env
 .venv/
 .Rproj
-join_metadata_modifications.py
-.DS_Store
+
+data-scripts/scrape/cookies.json
+data-scripts/scrape/headers.json
+data-scripts/scrape/data
+data-scripts/scrape/parse.log
+
+data-scripts/categories/cbfc_scraper.log
+data-scripts/categories/raw
