@@ -17,10 +17,10 @@ This folder contains datasets related to film censorship and modifications made 
 | `duration_mins` | float | Film duration in minutes |
 | `description` | string | Original description of the modification |
 | `cut_no` | integer | Sequential number for each modification within a film |
-| `deleted_mins` | float | Duration of content removed in minutes |
-| `replaced_mins` | float | Duration of content replaced in minutes |
-| `inserted_mins` | float | Duration of content added in minutes |
-| `total_modified_time_mins` | float | Total duration affected by modifications |
+| `deleted_secs_` | float | Duration of content removed in minutes |
+| `replaced_secs_` | float | Duration of content replaced in minutes |
+| `inserted_secs_` | float | Duration of content added in minutes |
+| `total_modified_time_secs` | float | Total duration affected by modifications |
 | `cert_date` | date | Date of certification (maybe be incomplete). Does not reflect date of release. |
 | `cert_no` | string | Certification number |
 | `applicant` | string | Person/entity applying for certification |
