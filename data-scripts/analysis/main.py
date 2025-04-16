@@ -8,6 +8,7 @@ import time
 import warnings
 import join_and_process
 import process_descriptions
+import add_tmdb_info
 from pathlib import Path
 
 # Configure logging
@@ -80,6 +81,7 @@ def main():
     parser = argparse.ArgumentParser(description='Run the full data processing pipeline')
     parser.add_argument('--skip-join', action='store_true', help='Skip the data joining step')
     parser.add_argument('--skip-process', action='store_true', help='Skip the description processing step')
+    parser.add_argument('--skip-tmdb', action='store_true', help='Skip the TMDB addition step')
     parser.add_argument('--rebuild-log', action='store_true', help='Rebuild processed IDs log from existing processed data')
     parser.add_argument('--limit', type=int, default=None, help='Limit the number of descriptions to process')
     parser.add_argument('--force', action='store_true', help='Force processing even if files have not changed')
@@ -93,12 +95,15 @@ def main():
     # Define paths to scripts
     join_script = current_dir / "join_and_process.py"
     process_script = current_dir / "process_descriptions.py"
+    tmdb_script = current_dir / "add_tmdb_info.py"
     
     # Define paths to data files
     data_dir = current_dir.parent.parent / "data"
-    complete_data_path = data_dir / "complete_data.csv"
-    processed_data_path = data_dir / "processed_data.csv"
-    log_file_path = current_dir / "processed_ids.log"
+    complete_data_path = data_dir / "individual_files/metadata_modifications.csv"
+    processed_data_path = data_dir / "data.csv"
+    tmdb_meta_path = data_dir / "tmdb_meta.csv"
+    process_log_file_path = current_dir / "processed_ids.log"
+    tmdb_log_file_path = current_dir / "tmdb_processed_ids.log"
     
     # Ensure the data directory exists
     data_dir.mkdir(exist_ok=True)
@@ -131,7 +136,7 @@ def main():
             logger.error("Join and process step failed. Pipeline halted.")
             return False
         
-        # Verify the complete_data.csv file was created
+        # Verify the metadata_modifications.csv file was created
         if not complete_data_path.exists():
             logger.error(f"Expected output file not found: {complete_data_path}")
             logger.error("Join and process step did not produce expected output. Pipeline halted.")
@@ -145,7 +150,7 @@ def main():
             logger.error(f"Process script not found at {process_script}")
             return False
         
-        # Check if complete_data.csv exists before processing
+        # Check if metadata_modifications.csv exists before processing
         if not complete_data_path.exists():
             logger.error(f"Input file for processing not found: {complete_data_path}")
             logger.error("Cannot run process_descriptions.py without input data. Pipeline halted.")
@@ -168,7 +173,7 @@ def main():
         process_args.extend([
             "--input", str(complete_data_path),
             "--output", str(processed_data_path),
-            "--log", str(log_file_path)
+            "--log", str(process_log_file_path)
         ])
         
         logger.info(f"Running process_descriptions.py with args: {' '.join(str(arg) for arg in process_args[1:])}")
@@ -191,6 +196,59 @@ def main():
             pipeline_success = False
     else:
         logger.info("Skipping process_descriptions.py step")
+    
+    # Step 3: Run add_tmdb_info.py (if not skipped)
+    if not args.skip_tmdb and pipeline_success:
+        if not tmdb_script.exists():
+            logger.error(f"TMDB addition script not found at {tmdb_script}")
+            return False
+        
+        # Check if data.csv exists before addition
+        if not processed_data_path.exists():
+            logger.error(f"Input file for TMDB addition not found: {processed_data_path}")
+            logger.error("Cannot run add_tmdb_info.py without processed data. Pipeline halted.")
+            return False
+        
+        # Prepare command-line arguments for add_tmdb_info.py
+        tmdb_args = [sys.executable, str(tmdb_script)]
+        
+        # Add optional arguments based on user input
+        if args.limit is not None:
+            tmdb_args.extend(["--limit", str(args.limit)])
+            
+        if args.force:
+            tmdb_args.extend(["--force"])
+        
+        # Add input, output, and log file paths
+        tmdb_args.extend([
+            "--input", str(processed_data_path),
+            "--output", str(tmdb_meta_path),
+            "--log", str(tmdb_log_file_path)
+        ])
+        
+        logger.info(f"Running add_tmdb_info.py with args: {' '.join(str(arg) for arg in tmdb_args[1:])}")
+        
+        # Run the add_tmdb_info.py script
+        try:
+            # Use the special function for live output
+            tmdb_success = run_script_with_live_output(
+                tmdb_script,
+                tmdb_args[2:],  # Skip python and script path
+                "add_tmdb_info.py"
+            )
+            
+            if not tmdb_success:
+                logger.error("TMDB addition step failed")
+                pipeline_success = False
+            
+        except Exception as e:
+            logger.error(f"Unexpected error running add_tmdb_info.py: {e}")
+            pipeline_success = False
+    else:
+        if not pipeline_success:
+            logger.warning("Skipping TMDB addition due to previous pipeline errors")
+        else:
+            logger.info("Skipping TMDB addition step (--skip-tmdb flag used)")
     
     # Report overall pipeline status
     elapsed_time = time.time() - start_time

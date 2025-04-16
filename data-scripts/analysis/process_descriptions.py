@@ -485,8 +485,8 @@ if __name__ == "__main__":
     current_dir = os.path.dirname(os.path.abspath(__file__))
     
     # Define default paths relative to the current directory if not provided
-    input_file = args.input or os.path.join(current_dir, "..", "..", "data", "complete_data.csv")
-    output_file = args.output or os.path.join(current_dir, "..", "..", "data", "processed_data.csv")
+    input_file = args.input or os.path.join(current_dir, "..", "..", "data", "metadata_modifications.csv")
+    output_file = args.output or os.path.join(current_dir, "..", "..", "data", "data.csv")
     log_file = args.log or os.path.join(current_dir, "processed_ids.log")  # Store log in analysis folder
     
     # Check if the input file exists

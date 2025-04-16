@@ -35,13 +35,14 @@ RAW_METADATA_PATH = '../../data/raw/metadata.csv'
 
 # Changed back to the default output directories to match R script
 BASE_OUTPUT_DIR = "../../data/"
+INDIVIDUAL_DATA_DIR = os.path.join(BASE_OUTPUT_DIR, "individual_files")
 SITE_DATA_DIR = os.path.join(BASE_OUTPUT_DIR, "site_data")
 
-CLEANED_MODS_OUTPUT_PATH = os.path.join(BASE_OUTPUT_DIR, "modifications_cleaned.csv")
-CLEANED_META_OUTPUT_PATH = os.path.join(BASE_OUTPUT_DIR, "metadata_cleaned.csv")
-COMPLETE_DATA_CSV_PATH = os.path.join(BASE_OUTPUT_DIR, "complete_data.csv")
-SITE_DATA_PARQUET_PATH = os.path.join(SITE_DATA_DIR, "censorship_data_cleaned.parquet")
-LAST_N_CSV_PATH = os.path.join(SITE_DATA_DIR, "last_n_records.csv")
+CLEANED_MODS_OUTPUT_PATH = os.path.join(INDIVIDUAL_DATA_DIR, "modifications_cleaned.csv")
+CLEANED_META_OUTPUT_PATH = os.path.join(INDIVIDUAL_DATA_DIR, "metadata_cleaned.csv")
+COMPLETE_DATA_CSV_PATH = os.path.join(INDIVIDUAL_DATA_DIR, "metadata_modifications.csv")
+SITE_DATA_PARQUET_PATH = os.path.join(SITE_DATA_DIR, "metadata_modifications.parquet")
+LAST_N_CSV_PATH = os.path.join(SITE_DATA_DIR, "recent_movies.csv")
 LAST_N_COUNT = 500  # Number of unique movies/certificates
 
 # File for tracking data file hashes
@@ -93,6 +94,7 @@ def should_skip_processing():
                 os.path.exists(COMPLETE_DATA_CSV_PATH) and
                 os.path.exists(SITE_DATA_PARQUET_PATH) and
                 os.path.exists(LAST_N_CSV_PATH)
+
             )
             
             # Check if hashes match
@@ -168,7 +170,7 @@ def clean_metadata(df):
     else:
         logger.warning("Column 'id' not found in metadata.")
     
-    # Clean and calculate duration_mins
+    # Clean and calculate duration_secs
     if 'duration' in df.columns:
         def parse_duration(duration_str):
             if pd.isna(duration_str):
@@ -181,7 +183,7 @@ def clean_metadata(df):
             if mmss_match:
                 minutes = float(mmss_match.group(1))
                 seconds = float(mmss_match.group(2))
-                return minutes + seconds/60
+                return minutes * 60 + seconds  # Convert to seconds
             
             # Try numeric format
             duration_raw = re.search(r'\d+\.\d+', duration_str)
@@ -195,14 +197,14 @@ def clean_metadata(df):
                 hrs = float(iso_match.group(1) or 0)
                 mins = float(iso_match.group(2) or 0)
                 secs = float(iso_match.group(3) or 0)
-                iso_mins = hrs * 60 + mins + secs / 60
-                return iso_mins if iso_mins > 0 else duration_numeric
+                iso_secs = hrs * 3600 + mins * 60 + secs
+                return iso_secs if iso_secs > 0 else duration_numeric * 60
             
-            return duration_numeric
+            return duration_numeric * 60  # Convert to seconds
         
-        df['duration_mins'] = df['duration'].apply(parse_duration)
+        df['duration_secs'] = df['duration'].apply(parse_duration)
     else:
-        df['duration_mins'] = np.nan
+        df['duration_secs'] = np.nan
     
     # Convert categorical columns
     for col in ['category', 'language', 'format']:
@@ -309,20 +311,20 @@ def clean_modifications(df, description_col='description'):
                 mins = float(parts[0])
                 secs_str = parts[1] + '0' if len(parts[1]) == 1 else parts[1]
                 secs = float(secs_str)
-                return mins + secs/60
-                
+                return mins * 60 + secs  # Convert to seconds
+            
             # Format: 00:00 (minutes:seconds)
             if re.match(r'^\d+:\d{2}$', time_str):
                 parts = time_str.split(':')
                 mins = float(parts[0])
                 secs = float(parts[1])
-                return mins + secs/60
+                return mins * 60 + secs  # Convert to seconds
             
             # Numeric value
             if re.match(r'^\d+(\.\d+)?$', time_str):
                 num_val = float(time_str)
-                # Heuristic: if > 1000, likely seconds; otherwise, assume minutes
-                return num_val / 60 if num_val > 1000 else num_val
+                # Heuristic: if > 1000, likely seconds; otherwise, assume minutes and convert
+                return num_val if num_val > 1000 else num_val * 60
             
             return 0
         
@@ -331,14 +333,14 @@ def clean_modifications(df, description_col='description'):
     # Apply time conversion
     for col in ['deleted', 'replaced', 'inserted']:
         if col in df.columns:
-            df[f'{col}_mins'] = convert_time_column(df[col])
-            logger.debug(f"Converted '{col}' to minutes")
+            df[f'{col}_secs'] = convert_time_column(df[col])
+            logger.debug(f"Converted '{col}' to seconds")
         else:
-            df[f'{col}_mins'] = 0
+            df[f'{col}_secs'] = 0
     
     # Calculate total modified time
-    df['total_modified_time_mins'] = df['deleted_mins'].fillna(0) + df['replaced_mins'].fillna(0) + df['inserted_mins'].fillna(0)
-    df['total_modified_time_mins'] = df['total_modified_time_mins'].round(2)
+    df['total_modified_time_secs'] = df['deleted_secs'].fillna(0) + df['replaced_secs'].fillna(0) + df['inserted_secs'].fillna(0)
+    df['total_modified_time_secs'] = df['total_modified_time_secs'].round(2)
     
     # Remove original time columns
     for col in ['deleted', 'replaced', 'inserted']:
@@ -569,7 +571,7 @@ def main():
         for col in ['mod_tags', 'content_tags', 'type_tags', 'cleaned_description']:
             if col not in modifications_cleaned.columns:
                 modifications_cleaned[col] = np.nan
-        for col in ['deleted_mins', 'replaced_mins', 'inserted_mins', 'total_modified_time_mins']:
+        for col in ['deleted_secs', 'replaced_secs', 'inserted_secs', 'total_modified_time_secs']:
             if col not in modifications_cleaned.columns:
                 modifications_cleaned[col] = 0
     else:
@@ -588,7 +590,7 @@ def main():
     logger.info("Joining modifications and metadata...")
     
     # Define columns to select from each table
-    cols_from_meta = ['id', 'film_name', 'film_name_full', 'language', 'duration_mins',
+    cols_from_meta = ['id', 'film_name', 'film_name_full', 'language', 'duration_secs',
                     'cert_date_parsed', 'cert_no', 'category', 'format', 'applicant', 'certifier']
     cols_from_meta = [col for col in cols_from_meta if col in metadata_cleaned.columns]
     
@@ -612,7 +614,7 @@ def main():
     # Consolidate potentially duplicated metadata within certificate IDs
     logger.info("Consolidating metadata within certificate IDs...")
     metadata_cols = ['film_name', 'film_base_name', 'film_name_full', 'language',
-                    'primary_language', 'duration_mins', 'cert_date_parsed', 'cert_no',
+                    'primary_language', 'duration_secs', 'cert_date_parsed', 'cert_no',
                     'category', 'format', 'applicant', 'certifier']
     metadata_cols = [col for col in metadata_cols if col in censorship_data.columns]
     
@@ -661,11 +663,11 @@ def main():
     final_cols = [
         'certificate_id', 'film_base_name', 'film_name_full',
         'primary_language',
-        'duration_mins',
+        'duration_secs',
         'mod_tags', 'content_tags', 'type_tags',
         'description',
         'cleaned_description',
-        'cut_no', 'deleted_mins', 'replaced_mins', 'inserted_mins', 'total_modified_time_mins',
+        'cut_no', 'deleted_secs', 'replaced_secs', 'inserted_secs', 'total_modified_time_secs',
         'cert_date_parsed', 'cert_no',
         'applicant', 'certifier'
     ]
@@ -704,19 +706,21 @@ def main():
                 censorship_data[col] = censorship_data[col].astype('category')
     
     # Numeric columns
-    for col in ['duration_mins', 'deleted_mins', 'replaced_mins', 'inserted_mins', 
-                'total_modified_time_mins', 'cut_no']:
+    for col in ['duration_secs', 'deleted_secs', 'replaced_secs', 'inserted_secs', 
+                'total_modified_time_secs', 'cut_no']:
         if col in censorship_data.columns and not pd.api.types.is_numeric_dtype(censorship_data[col]):
             censorship_data[col] = pd.to_numeric(censorship_data[col], errors='coerce')
             censorship_data[col] = censorship_data[col].replace([np.inf, -np.inf], np.nan)
     
-    # Filter to keep only movies (duration >= 60 mins or NA)
-    if 'duration_mins' in censorship_data.columns:
+    # Filter to keep only movies (duration >= 60 minutes or NA)
+    if 'duration_secs' in censorship_data.columns:
         original_rows = len(censorship_data)
-        censorship_data = censorship_data[censorship_data['duration_mins'].isna() | (censorship_data['duration_mins'] >= 60)]
+        # Convert duration to minutes for filtering and round to 2 decimal places
+        duration_mins = (censorship_data['duration_secs'] / 60).round(2)
+        censorship_data = censorship_data[duration_mins.isna() | (duration_mins >= 60)]
         rows_filtered = original_rows - len(censorship_data)
         if rows_filtered > 0:
-            logger.info(f"Filtered out {rows_filtered:,} rows with duration_mins < 60 (likely not movies)")
+            logger.info(f"Filtered out {rows_filtered:,} rows with duration < 60 minutes (likely not movies)")
     
     # Create output directories if they don't exist
     os.makedirs(BASE_OUTPUT_DIR, exist_ok=True)

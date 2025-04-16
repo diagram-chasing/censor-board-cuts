@@ -18,7 +18,7 @@ site_data_dir <- file.path(base_output_dir, "site_data")
 
 cleaned_mods_output_path <- file.path(base_output_dir, "modifications_cleaned.csv")
 cleaned_meta_output_path <- file.path(base_output_dir, "metadata_cleaned.csv")
-complete_data_csv_path <- file.path(base_output_dir, "complete_data.csv")
+complete_data_csv_path <- file.path(base_output_dir, "metadata_modifications.csv")
 site_data_parquet_path <- file.path(site_data_dir, "censorship_data_cleaned.parquet")
 last_n_csv_path <- file.path(site_data_dir, "last_n_records.csv")
 last_n_count <- 500 # Number of unique movies/certificates
