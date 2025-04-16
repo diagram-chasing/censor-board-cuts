@@ -85,11 +85,39 @@ clean_metadata <- function(df) {
   if ("cert_date" %in% names(df)) {
     if (!inherits(df$cert_date, "Date")) {
       
-      df[, cert_date_parsed := fcoalesce(
-        suppressWarnings(dmy(cert_date)),
-        suppressWarnings(ymd(cert_date)),
-        suppressWarnings(mdy(cert_date))
-      )]
+      # First clean the date string if needed
+      df[, cert_date_clean := as.character(cert_date)]
+      # Remove decimal point if present (e.g., "27012022.0" -> "27012022")
+      df[, cert_date_clean := gsub("\\.0$", "", cert_date_clean)]
+      
+      # Try to parse dates using direct pattern for DDMMYYYY format
+      df[, cert_date_parsed := {
+        date_str <- cert_date_clean
+        # Check for 8-digit format like "27012022"
+        if (grepl("^\\d{8}$", date_str)) {
+          day <- as.integer(substr(date_str, 1, 2))
+          month <- as.integer(substr(date_str, 3, 4))
+          year <- as.integer(substr(date_str, 5, 8))
+          
+          # Basic validation
+          if (!is.na(day) && !is.na(month) && !is.na(year) && 
+              day >= 1 && day <= 31 && month >= 1 && month <= 12 && year >= 1900 && year <= 2100) {
+            return(as.Date(sprintf("%04d-%02d-%02d", year, month, day)))
+          }
+        }
+        
+        # Fall back to lubridate parsers if the direct pattern doesn't match
+        fcoalesce(
+          suppressWarnings(dmy(cert_date)),
+          suppressWarnings(ymd(cert_date)),
+          suppressWarnings(mdy(cert_date))
+        )
+      }]
+      
+      # Clean up temporary column
+      df[, cert_date_clean := NULL]
+      
+      # Warning for unparseable dates
       if(any(is.na(df$cert_date_parsed) & !is.na(df$cert_date) & df$cert_date != "" )) {
         warning("Some non-empty certificate dates in metadata could not be parsed to Date format.")
       }

@@ -1,0 +1,748 @@
+import os
+import pandas as pd
+import numpy as np
+import re
+import time
+from datetime import datetime
+from pathlib import Path
+import pyarrow as pa
+import pyarrow.parquet as pq
+import logging
+import warnings
+
+# Suppress specific warnings
+warnings.filterwarnings('ignore', category=FutureWarning, module='pandas.core.strings.object_array')
+warnings.filterwarnings('ignore', category=FutureWarning, module='pandas.core.frame')
+warnings.filterwarnings('ignore', category=FutureWarning, module='pandas.core.indexers')
+warnings.filterwarnings('ignore', category=FutureWarning, message='.*downcasting.*')
+warnings.filterwarnings('ignore', category=FutureWarning, message='.*will attempt to set the values inplace.*')
+warnings.filterwarnings('ignore', category=FutureWarning, message='.*incompatible dtype.*')
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+
+# --- Configuration ---
+RAW_MODIFICATIONS_PATH = '../../data/raw/modifications.csv'
+RAW_METADATA_PATH = '../../data/raw/metadata.csv'
+
+# Changed back to the default output directories to match R script
+BASE_OUTPUT_DIR = "../../data/new_data"
+SITE_DATA_DIR = os.path.join(BASE_OUTPUT_DIR, "site_data")
+
+CLEANED_MODS_OUTPUT_PATH = os.path.join(BASE_OUTPUT_DIR, "modifications_cleaned.csv")
+CLEANED_META_OUTPUT_PATH = os.path.join(BASE_OUTPUT_DIR, "metadata_cleaned.csv")
+COMPLETE_DATA_CSV_PATH = os.path.join(BASE_OUTPUT_DIR, "complete_data.csv")
+SITE_DATA_PARQUET_PATH = os.path.join(SITE_DATA_DIR, "censorship_data_cleaned.parquet")
+LAST_N_CSV_PATH = os.path.join(SITE_DATA_DIR, "last_n_records.csv")
+LAST_N_COUNT = 500  # Number of unique movies/certificates
+
+
+def safe_str_replace(series, pattern, replacement, regex=True):
+    """
+    Safely apply string replace operations, handling non-string values
+    
+    Args:
+        series: pandas Series to operate on
+        pattern: regex or string pattern to replace
+        replacement: replacement string
+        regex: whether to use regex or plain string replacement
+        
+    Returns:
+        pandas Series with replacements applied to string values only
+    """
+    # First convert to string type, but keep NA as NA
+    str_series = series.astype(str).replace('nan', np.nan)
+    
+    # Apply string methods only to non-NA values
+    mask = str_series.notna()
+    if mask.any():
+        str_series.loc[mask] = str_series.loc[mask].str.replace(pattern, replacement, regex=regex).str.strip()
+    
+    return str_series
+
+
+def clean_metadata(df):
+    """
+    Cleans basic metadata columns. Standardizes ID to character, trimmed, leading zeros removed.
+    
+    Args:
+        df: DataFrame containing metadata
+    
+    Returns:
+        DataFrame with cleaned metadata columns
+    """
+    start_time = time.time()
+    logger.info("Cleaning metadata...")
+    
+    # Clean id column
+    if 'id' in df.columns:
+        df['id'] = df['id'].astype(str).str.strip()
+        df['id'] = df['id'].apply(lambda x: '0' if x == '0' else re.sub('^0+', '', x) if pd.notna(x) else np.nan)
+    else:
+        logger.warning("Column 'id' not found in metadata.")
+    
+    # Clean and calculate duration_mins
+    if 'duration' in df.columns:
+        def parse_duration(duration_str):
+            if pd.isna(duration_str):
+                return np.nan
+            
+            duration_str = str(duration_str).strip()
+            
+            # Try the format seen in the data: "000.33 MM.SS"
+            mmss_match = re.search(r'(\d+)\.(\d+)\s*MM\.SS', duration_str)
+            if mmss_match:
+                minutes = float(mmss_match.group(1))
+                seconds = float(mmss_match.group(2))
+                return minutes + seconds/60
+            
+            # Try numeric format
+            duration_raw = re.search(r'\d+\.\d+', duration_str)
+            duration_numeric = float(duration_raw.group(0)) if duration_raw else np.nan
+            
+            # Try ISO format
+            iso_pattern = r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?'
+            iso_match = re.search(iso_pattern, duration_str)
+            
+            if iso_match:
+                hrs = float(iso_match.group(1) or 0)
+                mins = float(iso_match.group(2) or 0)
+                secs = float(iso_match.group(3) or 0)
+                iso_mins = hrs * 60 + mins + secs / 60
+                return iso_mins if iso_mins > 0 else duration_numeric
+            
+            return duration_numeric
+        
+        df['duration_mins'] = df['duration'].apply(parse_duration)
+    else:
+        df['duration_mins'] = np.nan
+    
+    # Convert categorical columns
+    for col in ['category', 'language', 'format']:
+        if col in df.columns:
+            df[col] = df[col].astype('category')
+    
+    # Handle empty strings as NA
+    for col in ['applicant', 'certifier']:
+        if col in df.columns:
+            df[col] = df[col].replace('', np.nan)
+    
+    # Simple date parsing for cert_date - just use what's there
+    if 'cert_date' in df.columns:
+        def parse_ddmmyyyy(date_str):
+            if pd.isna(date_str) or str(date_str).strip() == '':
+                return pd.NaT
+                
+            date_str = str(date_str).strip()
+            
+            # Remove decimal point if present (e.g., "27012022.0" -> "27012022")
+            date_str = re.sub(r'\.0$', '', date_str)
+            
+            # Format example: "29012025" -> "2025-01-29"
+            if re.match(r'^\d{8}$', date_str):
+                try:
+                    day = int(date_str[0:2])
+                    month = int(date_str[2:4])
+                    year = int(date_str[4:8])
+                    
+                    # Validate basic date components
+                    if 1 <= day <= 31 and 1 <= month <= 12 and 1900 <= year <= 2100:
+                        return pd.Timestamp(f"{year:04d}-{month:02d}-{day:02d}")
+                except Exception:
+                    pass
+            
+            # If not 8-digit format, try basic ISO format
+            try:
+                return pd.to_datetime(date_str)
+            except:
+                return pd.NaT
+        
+        # Simply convert cert_date to proper format
+        df['cert_date_parsed'] = df['cert_date'].apply(parse_ddmmyyyy)
+        
+        # Report on date parsing
+        unparsed = df['cert_date_parsed'].isna() & df['cert_date'].notna()
+        if unparsed.any():
+            logger.warning(f"Could not parse {unparsed.sum()} date values from cert_date column")
+    else:
+        df['cert_date_parsed'] = pd.NaT
+    
+    elapsed = time.time() - start_time
+    logger.info(f"Metadata cleaning completed in {elapsed:.2f} seconds")
+    return df
+
+
+def clean_modifications(df, description_col='description'):
+    """
+    Cleans modification descriptions, standardizes certificate_id, calculates times.
+    
+    Args:
+        df: DataFrame containing modification details
+        description_col: Name of the column with descriptions
+    
+    Returns:
+        DataFrame with cleaned columns and added tags/times
+    """
+    start_time = time.time()
+    logger.info("Cleaning modifications...")
+    
+    if description_col not in df.columns:
+        raise ValueError(f"Column '{description_col}' not found in the dataframe.")
+    
+    # Clean certificate_id
+    if 'certificate_id' in df.columns:
+        df['certificate_id'] = df['certificate_id'].astype(str).str.strip()
+        df['certificate_id'] = df['certificate_id'].apply(lambda x: '0' if x == '0' else re.sub('^0+', '', x) if pd.notna(x) else np.nan)
+    else:
+        raise ValueError("Critical column 'certificate_id' not found in modifications data.")
+    
+    # Note: Skip tagging patterns since process_descriptions.py handles that now
+    
+    # Ensure description column is string type and handle empty strings
+    if description_col in df.columns:
+        df[description_col] = df[description_col].astype(str).str.strip()
+        df[description_col] = df[description_col].replace('', np.nan)
+        df[description_col] = df[description_col].replace('nan', np.nan)
+    
+    # Clean cut_no if it exists
+    if 'cut_no' in df.columns:
+        df['cut_no'] = pd.to_numeric(df['cut_no'].astype(str).str.strip(), errors='coerce')
+    
+    # Convert time columns - fixed to handle "00.00" format seen in real data
+    def convert_time_column(time_series):
+        def convert_time(time_val):
+            if pd.isna(time_val) or str(time_val).strip() == '':
+                return 0
+            
+            time_str = str(time_val).strip()
+            
+            # Format: MM.SS or M.SS or M.S - includes formats like "00.00" seen in the data
+            if re.match(r'^\d+\.\d{1,2}$', time_str):
+                parts = time_str.split('.')
+                mins = float(parts[0])
+                secs_str = parts[1] + '0' if len(parts[1]) == 1 else parts[1]
+                secs = float(secs_str)
+                return mins + secs/60
+                
+            # Format: 00:00 (minutes:seconds)
+            if re.match(r'^\d+:\d{2}$', time_str):
+                parts = time_str.split(':')
+                mins = float(parts[0])
+                secs = float(parts[1])
+                return mins + secs/60
+            
+            # Numeric value
+            if re.match(r'^\d+(\.\d+)?$', time_str):
+                num_val = float(time_str)
+                # Heuristic: if > 1000, likely seconds; otherwise, assume minutes
+                return num_val / 60 if num_val > 1000 else num_val
+            
+            return 0
+        
+        return time_series.apply(convert_time).clip(lower=0)
+    
+    # Apply time conversion
+    for col in ['deleted', 'replaced', 'inserted']:
+        if col in df.columns:
+            df[f'{col}_mins'] = convert_time_column(df[col])
+            logger.debug(f"Converted '{col}' to minutes")
+        else:
+            df[f'{col}_mins'] = 0
+    
+    # Calculate total modified time
+    df['total_modified_time_mins'] = df['deleted_mins'].fillna(0) + df['replaced_mins'].fillna(0) + df['inserted_mins'].fillna(0)
+    df['total_modified_time_mins'] = df['total_modified_time_mins'].round(2)
+    
+    # Remove original time columns
+    for col in ['deleted', 'replaced', 'inserted']:
+        if col in df.columns:
+            df = df.drop(col, axis=1)
+    
+    elapsed = time.time() - start_time
+    logger.info(f"Modifications cleaning completed in {elapsed:.2f} seconds")
+    return df
+
+
+def clean_embedded_content(df):
+    """
+    Cleans HTML/CSS, extracts basic info from film names, prioritizes language column.
+    IMPROVED to match R script's language extraction logic.
+    
+    Args:
+        df: DataFrame with film data
+    
+    Returns:
+        DataFrame with cleaned columns
+    """
+    start_time = time.time()
+    logger.info("Cleaning embedded content and extracting film/language data...")
+    
+    # Create a copy to avoid modifying the original during processing
+    result = df.copy()
+    
+    # Ensure columns exist and convert to string safely
+    cols_to_ensure_char = ['film_name_full', 'description', 'language', 'cleaned_description', 'film_name']
+    for col in cols_to_ensure_char:
+        if col not in result.columns:
+            result[col] = np.nan
+        # Safe conversion to string, preserving NaN values
+        if col in result.columns:
+            # First ensure the column is object type for string operations
+            if not pd.api.types.is_object_dtype(result[col]):
+                result[col] = result[col].astype(object)
+            # Then convert non-NA values to string
+            mask = result[col].notna()
+            if mask.any():
+                result.loc[mask, col] = result.loc[mask, col].astype(str)
+            # Handle common NA strings
+            result[col] = result[col].replace('nan', np.nan)
+            result[col] = result[col].replace('None', np.nan)
+            result[col] = result[col].replace('', np.nan)
+    
+    # Clean CSS/HTML from text columns using safe string replace
+    html_css_regex = r'<style.*?/style>|<.*?>|qr-redirect-endorsment.*?EndorsementFile No\.'
+    cols_to_clean_html = ['film_name_full', 'description', 'cleaned_description', 'film_name']
+    for col in cols_to_clean_html:
+        if col in result.columns:
+            # Safely apply string replace to handle mixed types
+            result[col] = safe_str_replace(result[col], html_css_regex, '')
+            result[col] = result[col].replace('', np.nan)
+    
+    # Identify records with embedded tables
+    if 'description' in result.columns:
+        # Only apply string contains to non-NA values
+        mask = result['description'].notna()
+        result['has_embedded_table'] = False  # Default value
+        if mask.any():
+            result.loc[mask, 'has_embedded_table'] = result.loc[mask, 'description'].str.contains(
+                r'Cut\s+No\.\s+Description.*Deleted.*Replaced.*Inserted', 
+                regex=True, 
+                na=False
+            )
+    else:
+        result['has_embedded_table'] = False
+    
+    # Extract base film name
+    if 'film_name_full' in result.columns:
+        # Apply regex replace only to non-NA values
+        mask = result['film_name_full'].notna()
+        result['film_base_name'] = np.nan  # Default value
+        if mask.any():
+            result.loc[mask, 'film_base_name'] = result.loc[mask, 'film_name_full'].str.replace(
+                r'\s*\(.*$', '', regex=True
+            ).str.strip()
+        
+        # Replace empty strings with NA
+        result['film_base_name'] = result['film_base_name'].replace('', np.nan)
+        
+        # Use film_name as fallback
+        if 'film_name' in result.columns:
+            fallback_mask = result['film_base_name'].isna() & result['film_name'].notna()
+            if fallback_mask.any():
+                result.loc[fallback_mask, 'film_base_name'] = result.loc[fallback_mask, 'film_name']
+    elif 'film_name' in result.columns:
+        result['film_base_name'] = result['film_name']
+    else:
+        result['film_base_name'] = np.nan
+    
+    # Initialize primary_language column
+    result['primary_language'] = np.nan
+    
+    # Extract language from film_name_full safely
+    if 'film_name_full' in result.columns and result['film_name_full'].notna().any():
+        def extract_language_from_full(full_name):
+            if pd.isna(full_name):
+                return np.nan
+                
+            # Pattern to match "(LANGUAGE)" in the film name
+            match = re.search(r'\(([A-Za-z\s-]+?)\)', str(full_name))
+            if match:
+                potential_lang = match.group(1).strip().upper()
+                
+                # Filter out non-language entries
+                is_format = re.search(r'COLOR|2-D|3-D|SCOPE|SCREEN|B/W|SUBTITLE', potential_lang, re.IGNORECASE)
+                if not is_format and len(potential_lang) < 20:
+                    return potential_lang
+            
+            return np.nan
+        
+        # Apply extraction only to non-NA values
+        mask = result['film_name_full'].notna()
+        if mask.any():
+            result.loc[mask, 'primary_language'] = result.loc[mask, 'film_name_full'].apply(extract_language_from_full)
+    
+    # Use existing language column as fallback safely
+    if 'language' in result.columns:
+        fallback_mask = result['primary_language'].isna() & result['language'].notna()
+        if fallback_mask.any():
+            # Convert to uppercase strings
+            result.loc[fallback_mask, 'primary_language'] = result.loc[fallback_mask, 'language'].astype(str).str.strip().str.upper()
+    
+    # Standardize language capitalization
+    if 'primary_language' in result.columns and result['primary_language'].notna().any():
+        # Proper title case for language names
+        def standardize_language(lang):
+            if pd.isna(lang):
+                return np.nan
+                
+            # Convert language to title case (first letter of each word capitalized)
+            words = str(lang).lower().split()
+            title_case_words = []
+            
+            for word in words:
+                # Special case for words like "with" that should remain lowercase
+                if word.lower() in ['with', 'and', 'in', 'of', 'the', 'for']:
+                    title_case_words.append(word.lower())
+                # Handle hyphenated words
+                elif '-' in word:
+                    subwords = word.split('-')
+                    title_case_words.append('-'.join(w.capitalize() for w in subwords))
+                # Normal capitalization
+                else:
+                    title_case_words.append(word.capitalize())
+                    
+            return ' '.join(title_case_words)
+        
+        # Apply standardization only to non-NA values
+        mask = result['primary_language'].notna()
+        if mask.any():
+            result.loc[mask, 'primary_language'] = result.loc[mask, 'primary_language'].apply(standardize_language)
+    
+    # Final cleanup for language columns
+    for col in ['primary_language', 'language']:
+        if col in result.columns:
+            result[col] = result[col].replace('', np.nan)
+            result[col] = result[col].replace('nan', np.nan)
+    
+    elapsed = time.time() - start_time
+    logger.info(f"Embedded content cleaning completed in {elapsed:.2f} seconds")
+    return result
+
+
+def main():
+    """
+    Main function to orchestrate data cleaning, joining, and saving.
+    """
+    start_time = time.time()
+    logger.info("=" * 80)
+    logger.info("Starting data processing pipeline")
+    logger.info("=" * 80)
+    
+    # Check if raw files exist
+    if not os.path.exists(RAW_MODIFICATIONS_PATH):
+        raise FileNotFoundError(f"Raw modifications file not found at: {RAW_MODIFICATIONS_PATH}")
+    if not os.path.exists(RAW_METADATA_PATH):
+        raise FileNotFoundError(f"Raw metadata file not found at: {RAW_METADATA_PATH}")
+    
+    # Read raw data files
+    try:
+        modifications_raw = pd.read_csv(RAW_MODIFICATIONS_PATH, dtype={'certificate_id': str}, na_values=['', 'NA', 'N/A', 'NULL'])
+        logger.info(f"Loaded {len(modifications_raw):,} rows from modifications data")
+    except Exception as e:
+        raise RuntimeError(f"Failed to load modifications data: {str(e)}")
+    
+    try:
+        metadata_raw = pd.read_csv(RAW_METADATA_PATH, dtype={'id': str}, na_values=['', 'NA', 'N/A', 'NULL'])
+        logger.info(f"Loaded {len(metadata_raw):,} rows from metadata data")
+    except Exception as e:
+        raise RuntimeError(f"Failed to load metadata data: {str(e)}")
+    
+    # Perform initial cleaning
+    metadata_cleaned = clean_metadata(metadata_raw)
+    
+    if 'description' not in modifications_raw.columns:
+        logger.warning("Column 'description' not found in modifications data. Modification cleaning partially skipped.")
+        modifications_cleaned = modifications_raw.copy()
+        
+        # Ensure certificate_id is cleaned
+        if 'certificate_id' in modifications_cleaned.columns:
+            modifications_cleaned['certificate_id'] = modifications_cleaned['certificate_id'].astype(str).str.strip()
+            modifications_cleaned['certificate_id'] = modifications_cleaned['certificate_id'].apply(
+                lambda x: '0' if x == '0' else re.sub('^0+', '', x) if pd.notna(x) else np.nan
+            )
+        else:
+            raise ValueError("Critical column 'certificate_id' not found in modifications data.")
+        
+        # Add expected columns as NA/0
+        for col in ['mod_tags', 'content_tags', 'type_tags', 'cleaned_description']:
+            if col not in modifications_cleaned.columns:
+                modifications_cleaned[col] = np.nan
+        for col in ['deleted_mins', 'replaced_mins', 'inserted_mins', 'total_modified_time_mins']:
+            if col not in modifications_cleaned.columns:
+                modifications_cleaned[col] = 0
+    else:
+        modifications_cleaned = clean_modifications(modifications_raw, description_col='description')
+    
+    # Check ID columns
+    for df_name, df, id_col in [('metadata', metadata_cleaned, 'id'), 
+                               ('modifications', modifications_cleaned, 'certificate_id')]:
+        if id_col not in df.columns:
+            raise ValueError(f"Required ID column '{id_col}' not found in {df_name} data.")
+        if not pd.api.types.is_string_dtype(df[id_col]):
+            logger.warning(f"{df_name} '{id_col}' column is not string type. Converting.")
+            df[id_col] = df[id_col].astype(str)
+    
+    # Join datasets
+    logger.info("Joining modifications and metadata...")
+    
+    # Define columns to select from each table
+    cols_from_meta = ['id', 'film_name', 'film_name_full', 'language', 'duration_mins',
+                    'cert_date_parsed', 'cert_no', 'category', 'format', 'applicant', 'certifier']
+    cols_from_meta = [col for col in cols_from_meta if col in metadata_cleaned.columns]
+    
+    # Perform the left join
+    censorship_data = pd.merge(
+        modifications_cleaned,
+        metadata_cleaned[cols_from_meta],
+        left_on='certificate_id',
+        right_on='id',
+        how='left'
+    )
+    logger.info(f"Rows after join: {len(censorship_data):,}")
+    
+    # Apply post-join cleaning
+    try:
+        censorship_data = clean_embedded_content(censorship_data)
+    except Exception as e:
+        logger.error(f"Error during embedded content cleaning: {str(e)}")
+        raise
+    
+    # Consolidate potentially duplicated metadata within certificate IDs
+    logger.info("Consolidating metadata within certificate IDs...")
+    metadata_cols = ['film_name', 'film_base_name', 'film_name_full', 'language',
+                    'primary_language', 'duration_mins', 'cert_date_parsed', 'cert_no',
+                    'category', 'format', 'applicant', 'certifier']
+    metadata_cols = [col for col in metadata_cols if col in censorship_data.columns]
+    
+    if len(metadata_cols) > 0 and 'certificate_id' in censorship_data.columns:
+        for col in metadata_cols:
+            if col in censorship_data.columns:
+                # Group by certificate_id and take the first non-NA value
+                first_values = censorship_data.groupby('certificate_id')[col].first()
+                
+                # Apply values to all rows with the same certificate_id
+                for cert_id in censorship_data['certificate_id'].unique():
+                    if pd.notna(first_values.get(cert_id, np.nan)):
+                        mask = (censorship_data['certificate_id'] == cert_id)
+                        censorship_data.loc[mask, col] = first_values.get(cert_id)
+    
+    # Remove truly duplicate modifications
+    logger.info("Removing duplicate modification rows...")
+    if 'certificate_id' in censorship_data.columns and 'description' in censorship_data.columns:
+        original_rows = len(censorship_data)
+        
+        # Create deduplication key columns
+        dedup_cols = ['certificate_id', 'description']  # Use ORIGINAL description
+        
+        # Include cut_no in deduplication key if it exists
+        if 'cut_no' in censorship_data.columns:
+            dedup_cols.append('cut_no')
+            logger.info(f"Using {', '.join(dedup_cols)} for deduplication")
+        else:
+            logger.info(f"Using {', '.join(dedup_cols)} for deduplication")
+        
+        # Create temporary columns for deduplication that handle NAs
+        censorship_data['temp_description'] = censorship_data['description'].fillna('__NA_PLACEHOLDER__')
+        if 'cut_no' in dedup_cols:
+            censorship_data['temp_cut_no'] = censorship_data['cut_no'].fillna(-999)
+            censorship_data = censorship_data.drop_duplicates(subset=['certificate_id', 'temp_description', 'temp_cut_no'])
+            censorship_data = censorship_data.drop(['temp_description', 'temp_cut_no'], axis=1)
+        else:
+            censorship_data = censorship_data.drop_duplicates(subset=['certificate_id', 'temp_description'])
+            censorship_data = censorship_data.drop('temp_description', axis=1)
+        
+        rows_removed = original_rows - len(censorship_data)
+        logger.info(f"Removed {rows_removed:,} duplicate modification rows")
+    
+    # Select and rename final columns
+    logger.info("Selecting and reformatting final columns...")
+    final_cols = [
+        'certificate_id', 'film_base_name', 'film_name_full',
+        'primary_language',
+        'duration_mins',
+        'mod_tags', 'content_tags', 'type_tags',
+        'description',
+        'cleaned_description',
+        'cut_no', 'deleted_mins', 'replaced_mins', 'inserted_mins', 'total_modified_time_mins',
+        'cert_date_parsed', 'cert_no',
+        'applicant', 'certifier'
+    ]
+    final_cols = [col for col in final_cols if col in censorship_data.columns]
+    censorship_data = censorship_data[final_cols]
+    
+    # Rename columns
+    rename_dict = {
+        'cert_date_parsed': 'cert_date',
+        'film_base_name': 'film_name',
+        'primary_language': 'language'
+    }
+    for old_name, new_name in rename_dict.items():
+        if old_name in censorship_data.columns:
+            censorship_data = censorship_data.rename(columns={old_name: new_name})
+    
+    # Ensure cert_date is properly formatted before saving
+    if 'cert_date' in censorship_data.columns:
+        # Convert to datetime objects first to ensure consistent format
+        censorship_data['cert_date'] = pd.to_datetime(censorship_data['cert_date'], errors='coerce')
+        # Convert to string in ISO format (YYYY-MM-DD)
+        censorship_data['cert_date'] = censorship_data['cert_date'].dt.strftime('%Y-%m-%d')
+        
+        # Check if cert_date is present after processing
+        if censorship_data['cert_date'].notna().sum() == 0:
+            logger.warning("cert_date column is empty after formatting - check date parsing logic")
+    
+    # Convert specific columns to factors (after consolidation and renaming)
+    for col in ['mod_tags', 'content_tags', 'type_tags', 'language', 'category', 'format']:
+        if col in censorship_data.columns:
+            # Clean values first
+            censorship_data[col] = censorship_data[col].replace('', np.nan)
+            censorship_data[col] = censorship_data[col].replace('nan', np.nan)
+            # Convert to category if not all NA
+            if censorship_data[col].notna().any():
+                censorship_data[col] = censorship_data[col].astype('category')
+    
+    # Numeric columns
+    for col in ['duration_mins', 'deleted_mins', 'replaced_mins', 'inserted_mins', 
+                'total_modified_time_mins', 'cut_no']:
+        if col in censorship_data.columns and not pd.api.types.is_numeric_dtype(censorship_data[col]):
+            censorship_data[col] = pd.to_numeric(censorship_data[col], errors='coerce')
+            censorship_data[col] = censorship_data[col].replace([np.inf, -np.inf], np.nan)
+    
+    # Filter to keep only movies (duration >= 60 mins or NA)
+    if 'duration_mins' in censorship_data.columns:
+        original_rows = len(censorship_data)
+        censorship_data = censorship_data[censorship_data['duration_mins'].isna() | (censorship_data['duration_mins'] >= 60)]
+        rows_filtered = original_rows - len(censorship_data)
+        if rows_filtered > 0:
+            logger.info(f"Filtered out {rows_filtered:,} rows with duration_mins < 60 (likely not movies)")
+    
+    # Create output directories if they don't exist
+    os.makedirs(BASE_OUTPUT_DIR, exist_ok=True)
+    os.makedirs(SITE_DATA_DIR, exist_ok=True)
+    
+    # Validate data before saving
+    logger.info("=" * 50)
+    logger.info("Data validation summary:")
+    
+    # Check cert_date
+    if 'cert_date' in censorship_data.columns:
+        date_null_count = censorship_data['cert_date'].isna().sum()
+        date_valid_count = censorship_data['cert_date'].notna().sum()
+        date_percent = (date_valid_count / len(censorship_data)) * 100 if len(censorship_data) > 0 else 0
+        logger.info(f"cert_date: {date_valid_count:,} valid dates ({date_percent:.1f}%), {date_null_count:,} null values")
+    
+    # Check language
+    if 'language' in censorship_data.columns:
+        lang_null_count = censorship_data['language'].isna().sum()
+        lang_valid_count = censorship_data['language'].notna().sum()
+        lang_percent = (lang_valid_count / len(censorship_data)) * 100 if len(censorship_data) > 0 else 0
+        logger.info(f"language: {lang_valid_count:,} valid values ({lang_percent:.1f}%), {lang_null_count:,} null values")
+        
+        # Show language distribution
+        if lang_valid_count > 0:
+            top_langs = censorship_data['language'].value_counts().head(10)
+            logger.info("Top languages:")
+            for lang, count in top_langs.items():
+                logger.info(f"  {lang}: {count:,} rows")
+    
+    # Check for unique modifications
+    if 'certificate_id' in censorship_data.columns and 'cut_no' in censorship_data.columns:
+        unique_films = censorship_data['certificate_id'].nunique()
+        total_rows = len(censorship_data)
+        avg_mods = total_rows / unique_films if unique_films > 0 else 0
+        logger.info(f"Unique films: {unique_films:,}, Total modifications: {total_rows:,}, Avg mods per film: {avg_mods:.2f}")
+    
+    # Save outputs
+    logger.info("=" * 50)
+    logger.info("Saving output files...")
+    
+    # 1. Save cleaned modifications CSV
+    try:
+        modifications_cleaned.to_csv(CLEANED_MODS_OUTPUT_PATH, index=False)
+        logger.info(f"Saved cleaned modifications data ({len(modifications_cleaned):,} rows) to {CLEANED_MODS_OUTPUT_PATH}")
+    except Exception as e:
+        logger.error(f"Error saving cleaned modifications CSV: {str(e)}")
+    
+    # 2. Save cleaned metadata CSV
+    try:
+        metadata_cleaned.to_csv(CLEANED_META_OUTPUT_PATH, index=False)
+        logger.info(f"Saved cleaned metadata data ({len(metadata_cleaned):,} rows) to {CLEANED_META_OUTPUT_PATH}")
+    except Exception as e:
+        logger.error(f"Error saving cleaned metadata CSV: {str(e)}")
+    
+    # 3. Save complete joined and cleaned data CSV
+    try:
+        censorship_data.to_csv(COMPLETE_DATA_CSV_PATH, index=False)
+        logger.info(f"Saved complete cleaned data ({len(censorship_data):,} rows) to {COMPLETE_DATA_CSV_PATH}")
+    except Exception as e:
+        logger.error(f"Error saving complete cleaned data CSV: {str(e)}")
+    
+    # 4. Save complete joined and cleaned data Parquet
+    try:
+        # Convert categorical columns to string for parquet compatibility
+        parquet_data = censorship_data.copy()
+        for col in parquet_data.select_dtypes(include=['category']).columns:
+            parquet_data[col] = parquet_data[col].astype(str)
+        
+        # Handle NaNs in categorical columns for parquet compatibility
+        for col in parquet_data.columns:
+            if pd.api.types.is_object_dtype(parquet_data[col]):
+                parquet_data[col] = parquet_data[col].fillna('')
+        
+        # Save as parquet
+        table = pa.Table.from_pandas(parquet_data)
+        pq.write_table(table, SITE_DATA_PARQUET_PATH, compression='zstd', compression_level=5)
+        logger.info(f"Saved cleaned data as Parquet to {SITE_DATA_PARQUET_PATH}")
+    except Exception as e:
+        logger.error(f"Error saving Parquet file: {str(e)}")
+    
+    # 5. Create and save the 'last N' movies CSV
+    logger.info(f"Creating last {LAST_N_COUNT} movies CSV...")
+    if 'cert_date' in censorship_data.columns and 'certificate_id' in censorship_data.columns:
+        # Find the latest date for each unique certificate_id
+        latest_certs = censorship_data[~censorship_data['certificate_id'].isna()] \
+            .groupby('certificate_id')['cert_date'] \
+            .max() \
+            .reset_index() \
+            .sort_values('cert_date', ascending=False)
+        
+        # Select the top N unique certificate_ids
+        last_n_movie_ids = latest_certs.head(LAST_N_COUNT)['certificate_id'].tolist()
+        
+        if last_n_movie_ids:
+            # Filter the original data for these selected IDs
+            last_n_data = censorship_data[censorship_data['certificate_id'].isin(last_n_movie_ids)]
+            
+            # Sort by date and ID
+            sort_cols = ['cert_date', 'certificate_id']
+            if 'cut_no' in last_n_data.columns:
+                sort_cols.append('cut_no')
+            
+            last_n_data = last_n_data.sort_values(sort_cols, ascending=[False, True, True])
+            
+            # Save the subset
+            try:
+                actual_movies_saved = last_n_data['certificate_id'].nunique()
+                logger.info(f"Saving data for latest {actual_movies_saved:,} movies ({len(last_n_data):,} rows) to {LAST_N_CSV_PATH}")
+                last_n_data.to_csv(LAST_N_CSV_PATH, index=False)
+                logger.info(f"Saved latest {actual_movies_saved:,} movies data to {LAST_N_CSV_PATH}")
+            except Exception as e:
+                logger.error(f"Error saving last N movies CSV: {str(e)}")
+        else:
+            logger.warning("No valid certificate IDs found with dates to determine the last N movies")
+    else:
+        logger.warning("Columns 'cert_date' and/or 'certificate_id' not found in the final data. Cannot create 'last N' certified movies file")
+    
+    total_elapsed = time.time() - start_time
+    logger.info("=" * 80)
+    logger.info(f"Data processing completed in {total_elapsed:.2f} seconds")
+    logger.info("=" * 80)
+
+
+if __name__ == "__main__":
+    main() 
