@@ -12,3 +12,4 @@ data-scripts/scrape/headers.json
 .venv/
 .Rproj
 join_metadata_modifications.py
+.DS_Store
