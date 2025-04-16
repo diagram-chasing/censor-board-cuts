@@ -343,23 +343,27 @@ def process_csv(input_file, output_file, log_file=None, limit=None, use_mock=Fal
         processed_ids = get_processed_ids(log_file)
 
     # Define columns
-    original_columns = [
-        'certificate_id', 'film_name', 'film_name_full', 'language', 'duration_mins',
-        'description', 'cut_no',
-        'deleted_mins', 'replaced_mins', 'inserted_mins', 'total_modified_time_mins',
-        'cert_date', 'cert_no', 'applicant', 'certifier'
-    ]
+    # Instead of hardcoding original columns, we'll determine them from the input data
     ai_columns = [
         'ai_cleaned_description', 'ai_action_types', 'ai_content_types', 'ai_media_elements', 'ai_reason',
         'censored_item_index', 'censored_content', 'censored_reference', 'censored_action',
         'censored_content_types', 'censored_media_element', 'censored_replacement'
     ]
-    columns_to_keep = original_columns + ai_columns
-
+    
     # Read the input CSV file
     try:
         df = pd.read_csv(input_file)
         logger.info(f"Loaded input CSV with {len(df)} rows")
+        
+        # Determine original columns from the input data
+        # Exclude AI columns that might already exist in the input
+        original_columns = [col for col in df.columns if not col.startswith('ai_') and col not in ai_columns]
+        logger.info(f"Detected {len(original_columns)} original columns from input data")
+        
+        # Define columns to keep (original + AI)
+        columns_to_keep = original_columns + ai_columns
+        logger.info(f"Will preserve {len(original_columns)} original columns and add {len(ai_columns)} AI columns")
+        
     except Exception as e:
         logger.error(f"Error loading input CSV file: {e}")
         return
@@ -418,14 +422,18 @@ def process_csv(input_file, output_file, log_file=None, limit=None, use_mock=Fal
             # Handle case where no censored items found or error occurred
             # Create a row with original data + empty AI fields
             row_dict = row.to_dict()
-            row_dict.update({
-                'ai_cleaned_description': json_result.get('cleaned_description', '') if json_result else '', # Try to keep cleaned desc if available
-                'ai_action_types': '', 'ai_content_types': '',
-                'ai_media_elements': '', 'ai_reason': json_result.get('reason', '') if json_result else '', # Try to keep reason if available
-                'censored_item_index': pd.NA, 'censored_content': '', 'censored_reference': '',
-                'censored_action': '', 'censored_content_types': '', 'censored_media_element': '',
-                'censored_replacement': ''
-            })
+            
+            # Add AI fields with empty values
+            for ai_col in ai_columns:
+                if ai_col == 'ai_cleaned_description' and json_result:
+                    row_dict[ai_col] = json_result.get('cleaned_description', '')
+                elif ai_col == 'ai_reason' and json_result:
+                    row_dict[ai_col] = json_result.get('reason', '')
+                elif ai_col == 'censored_item_index':
+                    row_dict[ai_col] = pd.NA
+                else:
+                    row_dict[ai_col] = ''
+            
             flattened_rows = [row_dict] # Create a list containing this single row dict
 
         # Convert batch to DataFrame
@@ -434,11 +442,20 @@ def process_csv(input_file, output_file, log_file=None, limit=None, use_mock=Fal
         # Ensure all necessary columns exist, fill missing with NA/empty string appropriately
         for col in columns_to_keep:
             if col not in batch_df.columns:
-                 # Basic type guessing for default values
-                 if col in ['censored_item_index', 'deleted_mins', 'replaced_mins', 'inserted_mins', 'total_modified_time_mins', 'duration_mins']:
-                     batch_df[col] = pd.NA
-                 else:
-                     batch_df[col] = '' # Default to empty string for others
+                # Basic type guessing for default values
+                if col in ['censored_item_index', 'deleted_mins', 'replaced_mins', 'inserted_mins', 'total_modified_time_mins', 'duration_mins']:
+                    batch_df[col] = pd.NA
+                elif col.startswith('ai_') or col.startswith('censored_'):
+                    # AI-generated columns should be empty strings if missing
+                    batch_df[col] = ''
+                else:
+                    # For original columns that are missing, try to get from the original row
+                    if col in row.to_dict():
+                        batch_df[col] = row[col]
+                    else:
+                        # If still not found, use empty string as default
+                        batch_df[col] = ''
+                        logger.debug(f"Column '{col}' not found in original data or processed result")
 
         # Reorder/select columns
         batch_df = batch_df[columns_to_keep]

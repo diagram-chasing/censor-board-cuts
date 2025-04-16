@@ -12,6 +12,7 @@ import pyarrow.parquet as pq
 import logging
 import warnings
 import argparse
+import random
 
 # Suppress specific warnings
 warnings.filterwarnings('ignore', category=FutureWarning, module='pandas.core.strings.object_array')
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 # --- Configuration ---
 RAW_MODIFICATIONS_PATH = '../../data/raw/modifications.csv'
 RAW_METADATA_PATH = '../../data/raw/metadata.csv'
+RAW_CATEGORIES_PATH = '../../data/raw/categories.csv'
 
 # Changed back to the default output directories to match R script
 BASE_OUTPUT_DIR = "../../data/"
@@ -81,6 +83,10 @@ def should_skip_processing():
         "metadata": calculate_file_hash(RAW_METADATA_PATH)
     }
     
+    # Add categories file hash if it exists
+    if os.path.exists(RAW_CATEGORIES_PATH):
+        current_hashes["categories"] = calculate_file_hash(RAW_CATEGORIES_PATH)
+    
     # Load previous file hashes if they exist
     if os.path.exists(HASH_CACHE_PATH):
         try:
@@ -102,6 +108,12 @@ def should_skip_processing():
                 current_hashes["modifications"] == previous_hashes.get("modifications", "") and
                 current_hashes["metadata"] == previous_hashes.get("metadata", "")
             )
+            
+            # Also check categories file if it exists
+            if "categories" in current_hashes:
+                files_unchanged = files_unchanged and (
+                    current_hashes["categories"] == previous_hashes.get("categories", "")
+                )
             
             if files_unchanged and outputs_exist:
                 return True, current_hashes
@@ -226,6 +238,35 @@ def clean_metadata(df):
             
             # Remove decimal point if present (e.g., "27012022.0" -> "27012022")
             date_str = re.sub(r'\.0$', '', date_str)
+            
+            # Format from categories.csv: "09-NOV-99 00:00:00"
+            categories_match = re.match(r'(\d{1,2})-([A-Za-z]{3})-(\d{2})\s+\d{2}:\d{2}:\d{2}', date_str)
+            if categories_match:
+                day = int(categories_match.group(1))
+                month_str = categories_match.group(2).upper()
+                year_str = categories_match.group(3)
+                
+                # Convert month name to number
+                month_map = {
+                    'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
+                    'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12
+                }
+                
+                if month_str in month_map:
+                    month = month_map[month_str]
+                    
+                    # Handle 2-digit year
+                    if len(year_str) == 2:
+                        year = int(year_str)
+                        # Assume 20xx for years 00-99
+                        if year < 100:
+                            year += 2000 if year < 50 else 1900
+                    else:
+                        year = int(year_str)
+                    
+                    # Validate basic date components
+                    if 1 <= day <= 31 and 1 <= month <= 12 and 1900 <= year <= 2100:
+                        return pd.Timestamp(f"{year:04d}-{month:02d}-{day:02d}")
             
             # Format example: "29012025" -> "2025-01-29"
             if re.match(r'^\d{8}$', date_str):
@@ -508,6 +549,33 @@ def clean_embedded_content(df):
     return result
 
 
+def normalize_cert_no(cert_no):
+    """
+    Normalizes certificate numbers by removing slashes and standardizing format.
+    
+    Args:
+        cert_no: Certificate number in various formats
+        
+    Returns:
+        Normalized certificate number
+    """
+    if pd.isna(cert_no):
+        return np.nan
+        
+    cert_no = str(cert_no).strip()
+    
+    # If already in normalized format (no slashes), return as is
+    if '/' not in cert_no:
+        return cert_no
+    
+    # Simple approach: remove all slashes
+    normalized = cert_no.replace('/', '')
+    
+    
+    
+    return normalized
+
+
 def main():
     """
     Main function to orchestrate data cleaning, joining, and saving.
@@ -551,8 +619,124 @@ def main():
     except Exception as e:
         raise RuntimeError(f"Failed to load metadata data: {str(e)}")
     
+    # Load categories data if available
+    categories_data = None
+    if os.path.exists(RAW_CATEGORIES_PATH):
+        try:
+            categories_data = pd.read_csv(RAW_CATEGORIES_PATH, na_values=['', 'NA', 'N/A', 'NULL'])
+            logger.info(f"Loaded {len(categories_data):,} rows from categories data")
+            
+            # Normalize certificate numbers in categories data
+            if 'Certificate No' in categories_data.columns:
+                categories_data['normalized_cert_no'] = categories_data['Certificate No'].apply(normalize_cert_no)
+                
+                # Log a few examples for debugging
+                sample_size = min(3, len(categories_data))
+                sample_certs = categories_data[['Certificate No', 'normalized_cert_no']].head(sample_size)
+                
+                
+                # Check for any that didn't normalize properly
+                not_normalized = categories_data[
+                    ~categories_data['normalized_cert_no'].str.match(r'^[A-Z]+\d+\d{4}-[A-Z]+$', na=False)
+                ]
+                
+        except Exception as e:
+            logger.warning(f"Failed to load categories data: {str(e)}")
+            categories_data = None
+    else:
+        logger.warning(f"Categories file not found at: {RAW_CATEGORIES_PATH}")
+    
     # Perform initial cleaning
     metadata_cleaned = clean_metadata(metadata_raw)
+    
+    # Join with categories data if available
+    if categories_data is not None and 'normalized_cert_no' in categories_data.columns:
+        logger.info("Joining metadata with categories data...")
+        
+        # Normalize certificate numbers in metadata if cert_no column exists
+        if 'cert_no' in metadata_cleaned.columns:
+            metadata_cleaned['normalized_cert_no'] = metadata_cleaned['cert_no'].apply(normalize_cert_no)
+           
+            
+            # Log a few examples for debugging
+            sample_size = min(3, len(metadata_cleaned))
+            sample_certs = metadata_cleaned[['cert_no', 'normalized_cert_no']].head(sample_size)
+            
+            
+            # Check for any that didn't normalize properly
+            not_normalized = metadata_cleaned[
+                ~metadata_cleaned['normalized_cert_no'].str.match(r'^[A-Z]+\d+\d{4}-[A-Z]+$', na=False)
+            ]
+           
+            
+            # Create a mapping for language, rating, and cbfc_file_no
+            language_map = {}
+            rating_map = {}
+            cbfc_file_no_map = {}
+            cert_date_map = {}
+            
+            for _, row in categories_data.iterrows():
+                if pd.notna(row['normalized_cert_no']):
+                    # Map language if available
+                    if pd.notna(row['Movie Language']):
+                        language_map[row['normalized_cert_no']] = row['Movie Language']
+                    
+                    # Map rating if available
+                    if pd.notna(row['Movie Category']):
+                        rating_map[row['normalized_cert_no']] = row['Movie Category']
+                    
+                    # Map cbfc_file_no if available
+                    if pd.notna(row['source_file']):
+                        # Remove .html extension
+                        cbfc_file_no = row['source_file'].replace('.html', '')
+                        cbfc_file_no_map[row['normalized_cert_no']] = cbfc_file_no
+                    
+                    # Map cert_date if available
+                    if pd.notna(row['Certificate Date']):
+                        cert_date_map[row['normalized_cert_no']] = row['Certificate Date']
+            
+            # Convert categorical columns to string type before updating
+            if 'language' in metadata_cleaned.columns and pd.api.types.is_categorical_dtype(metadata_cleaned['language']):
+                metadata_cleaned['language'] = metadata_cleaned['language'].astype(str)
+            elif 'language' not in metadata_cleaned.columns:
+                metadata_cleaned['language'] = np.nan
+            
+            # Create rating column if it doesn't exist
+            if 'rating' not in metadata_cleaned.columns:
+                metadata_cleaned['rating'] = np.nan
+                
+            # Create cbfc_file_no column if it doesn't exist
+            if 'cbfc_file_no' not in metadata_cleaned.columns:
+                metadata_cleaned['cbfc_file_no'] = np.nan
+            
+            # Apply mappings to metadata
+            for idx, row in metadata_cleaned.iterrows():
+                cert_no = row['normalized_cert_no']
+                
+                # Override language if available in categories
+                if cert_no in language_map and pd.notna(language_map[cert_no]):
+                    metadata_cleaned.at[idx, 'language'] = language_map[cert_no]
+                
+                # Add rating from categories
+                if cert_no in rating_map and pd.notna(rating_map[cert_no]):
+                    metadata_cleaned.at[idx, 'rating'] = rating_map[cert_no]
+                
+                # Add cbfc_file_no from categories
+                if cert_no in cbfc_file_no_map and pd.notna(cbfc_file_no_map[cert_no]):
+                    metadata_cleaned.at[idx, 'cbfc_file_no'] = cbfc_file_no_map[cert_no]
+                
+                # Override cert_date if available in categories
+                if cert_no in cert_date_map and pd.notna(cert_date_map[cert_no]):
+                    metadata_cleaned.at[idx, 'cert_date'] = cert_date_map[cert_no]
+            
+            logger.info("Applied categories data to metadata")
+            
+            # Drop the temporary normalized_cert_no column
+            metadata_cleaned = metadata_cleaned.drop('normalized_cert_no', axis=1)
+        else:
+            logger.warning("cert_no column not found in metadata_cleaned, cannot join with categories data")
+            # Create a dummy normalized_cert_no column to avoid errors later
+            metadata_cleaned['normalized_cert_no'] = np.nan
     
     if 'description' not in modifications_raw.columns:
         logger.warning("Column 'description' not found in modifications data. Modification cleaning partially skipped.")
@@ -591,7 +775,8 @@ def main():
     
     # Define columns to select from each table
     cols_from_meta = ['id', 'film_name', 'film_name_full', 'language', 'duration_secs',
-                    'cert_date_parsed', 'cert_no', 'category', 'format', 'applicant', 'certifier']
+                    'cert_date_parsed', 'cert_no', 'category', 'format', 'applicant', 'certifier',
+                    'rating', 'cbfc_file_no']
     cols_from_meta = [col for col in cols_from_meta if col in metadata_cleaned.columns]
     
     # Perform the left join
@@ -615,7 +800,7 @@ def main():
     logger.info("Consolidating metadata within certificate IDs...")
     metadata_cols = ['film_name', 'film_base_name', 'film_name_full', 'language',
                     'primary_language', 'duration_secs', 'cert_date_parsed', 'cert_no',
-                    'category', 'format', 'applicant', 'certifier']
+                    'category', 'format', 'applicant', 'certifier', 'rating', 'cbfc_file_no']
     metadata_cols = [col for col in metadata_cols if col in censorship_data.columns]
     
     if len(metadata_cols) > 0 and 'certificate_id' in censorship_data.columns:
@@ -669,7 +854,7 @@ def main():
         'cleaned_description',
         'cut_no', 'deleted_secs', 'replaced_secs', 'inserted_secs', 'total_modified_time_secs',
         'cert_date_parsed', 'cert_no',
-        'applicant', 'certifier'
+        'applicant', 'certifier', 'rating', 'cbfc_file_no'
     ]
     final_cols = [col for col in final_cols if col in censorship_data.columns]
     censorship_data = censorship_data[final_cols]

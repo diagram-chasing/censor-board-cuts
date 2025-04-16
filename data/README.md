@@ -37,6 +37,9 @@ This folder contains datasets related to film censorship and modifications made 
 | `censored_content_types` | string | Types of content being censored |
 | `censored_media_element` | string | Specific media element being censored |
 | `censored_replacement` | string | What was used to replace censored content (if applicable) |
+| `rating` | string | Film rating/certification category |
+| `cbfc_file_no` | string | CBFC file number |
+
 
 We use an LLM to extract metadata (such as the `ai_` columns). The prompt and scripts are available in [the analysis folder](../data-scripts/analysis/README.md).
 
