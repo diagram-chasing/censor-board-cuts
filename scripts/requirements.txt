@@ -1,0 +1,9 @@
+requests
+beautifulsoup4
+pandas
+pytesseract
+Pillow
+urllib3
+pathlib
+certifi
+pyOpenSSL

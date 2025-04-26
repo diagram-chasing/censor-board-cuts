@@ -41,7 +41,7 @@ This folder contains datasets related to film censorship and modifications made 
 | `cbfc_file_no` | string | CBFC file number |
 
 
-We use an LLM to extract metadata (such as the `ai_` columns). The prompt and scripts are available in [the analysis folder](../data-scripts/analysis/README.md).
+We use an LLM to extract metadata (such as the `ai_` columns). The prompt and scripts are available in [the analysis folder](../scripts/analysis/README.md).
 
 ## Subfolders
 

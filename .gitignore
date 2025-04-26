@@ -11,13 +11,13 @@ __pycache__/
 .Rproj
 .DS_Store
 
-data-scripts/certificates/parse.log
-data-scripts/certificates/.headers.json
-data-scripts/certificates/.cookies.json
-data-scripts/certificates/raw
+scripts/certificates/parse.log
+scripts/certificates/.headers.json
+scripts/certificates/.cookies.json
+scripts/certificates/raw
 
-data-scripts/categories/cbfc_scraper.log
-data-scripts/categories/pipeline.log
-data-scripts/categories/raw
+scripts/categories/cbfc_scraper.log
+scripts/categories/pipeline.log
+scripts/categories/raw
 
 data/individual_files

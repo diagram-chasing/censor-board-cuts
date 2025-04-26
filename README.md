@@ -16,17 +16,17 @@ More available in the [data folder](/data/).
 
 ## Data Collection
 
-The scraper (data-scripts/certificates/) collects:
+The scraper (scripts/certificates/) collects:
 
 - Film metadata (title, language, duration, etc.)
 - Certification details
 - Content modifications/cuts
 
-More information is available in the [certificates/README.md](data-scripts/certificates/README.md) file. Each row is incrementally saved to the relevant CSV files and the scraper can resume from the last processed ID (the methodology is described in the README).
+More information is available in the [certificates/README.md](scripts/certificates/README.md) file. Each row is incrementally saved to the relevant CSV files and the scraper can resume from the last processed ID (the methodology is described in the README).
 
 ## Analysis
 
-Python scripts to (data-scripts/analysis/) clean and process the raw data:
+Python scripts to (scripts/analysis/) clean and process the raw data:
 
 - Standardizes duration formats and attempts to pull out timestamps from the descriptions.
 - Categorizes modifications based on type (audio, visual, deletion, etc.) and the basic type of content (violence, nudity, etc.) using an LLM.
