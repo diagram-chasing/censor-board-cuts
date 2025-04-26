@@ -9,11 +9,15 @@ __pycache__/
 .env
 .venv/
 .Rproj
+.DS_Store
 
-data-scripts/scrape/cookies.json
-data-scripts/scrape/headers.json
-data-scripts/scrape/data
-data-scripts/scrape/parse.log
+data-scripts/certificates/parse.log
+data-scripts/certificates/.headers.json
+data-scripts/certificates/.cookies.json
+data-scripts/certificates/raw
 
 data-scripts/categories/cbfc_scraper.log
+data-scripts/categories/pipeline.log
 data-scripts/categories/raw
+
+data/individual_files

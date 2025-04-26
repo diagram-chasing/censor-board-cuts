@@ -3,6 +3,9 @@ import os
 import csv
 import time
 import argparse
+import pandas as pd
+import base64
+from urllib.parse import urlparse, parse_qs
 from bs4 import BeautifulSoup
 from pathlib import Path
 
@@ -43,11 +46,11 @@ def extract_table_data(html_content):
     
     return record
 
-def save_data_to_csv(all_data, output_file):
+def save_data_to_csv(all_data, output_file, append=False):
     """Save all data to CSV file with complete fieldnames"""
     # If no data, return
     if not all_data:
-        return
+        return 0
     
     # Determine all possible fields across all records
     all_fields = set()
@@ -79,10 +82,17 @@ def save_data_to_csv(all_data, output_file):
     # Add remaining fields in sorted order
     fieldnames.extend(sorted(list(all_fields)))
     
+    # Write mode based on append flag
+    mode = 'a' if append else 'w'
+    
+    # Write header only if creating a new file or not appending
+    write_header = not (append and os.path.exists(output_file) and os.path.getsize(output_file) > 0)
+    
     # Write all data at once
-    with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+    with open(output_file, mode, newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
+        if write_header:
+            writer.writeheader()
         writer.writerows(all_data)
     
     return len(all_data)
@@ -99,13 +109,67 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Extract data from HTML files and save to CSV.')
     parser.add_argument('--input-dir', type=str, default='raw/categories',
                         help='Directory containing HTML files (default: raw/categories)')
-    parser.add_argument('--output-file', type=str, default='csv/categories.csv',
-                        help='Output CSV file path (default: csv/categories.csv)')
-    parser.add_argument('--failed-files', type=str, default='csv/failed_files.txt',
-                        help='Output file for paths with no appropriate table (default: csv/failed_files.txt)')
-    parser.add_argument('--limit', type=int, default=10000,
-                        help='Maximum number of files to process (default: 10000, use 0 for no limit)')
+    parser.add_argument('--output-file', type=str, default='../../data/raw/categories.csv',
+                        help='Output CSV file path (default: ../../data/raw/categories.csv)')
+    parser.add_argument('--failed-files', type=str, default='.failed_files.txt',
+                        help='Output file for paths with no appropriate table (default: .failed_files.txt)')
+    parser.add_argument('--limit', type=int, default=0,
+                        help='Maximum number of files to process (default: 0 (no))')
+    parser.add_argument('--recent-file', type=str, default='../../data/raw/recent.csv',
+                        help='CSV file containing recent recids to process (default: ../../data/raw/recent.csv)')
+    parser.add_argument('--append', action='store_true', default=True,
+                        help='Append to existing output file instead of overwriting')
+    parser.add_argument('--all', action='store_true', default=False,
+                        help='Process all HTML files in input directory, ignoring the recent-file filter')
     return parser.parse_args()
+
+def deduplicate_and_sort_csv(csv_path):
+    """Deduplicate and sort the CSV file"""
+    if not os.path.exists(csv_path):
+        print(f"Error: {csv_path} does not exist")
+        return
+    
+    try:
+        # Read the CSV file
+        df = pd.read_csv(csv_path)
+        
+        # Get row count before deduplication
+        original_count = len(df)
+        
+        # Deduplicate based on all columns
+        df = df.drop_duplicates()
+        
+        # Get row count after deduplication
+        deduplicated_count = len(df)
+        
+        # Sort by Movie Name and Certificate No in descending order if the column exists
+        if "Movie Name" in df.columns and "Certificate No" in df.columns:
+            df = df.sort_values(by=["Movie Name", "Certificate No"], ascending=False)
+        
+        # Write back to the same file
+        df.to_csv(csv_path, index=False)
+        
+        print(f"Deduplicated {original_count - deduplicated_count} rows")
+        print(f"Sorted by 'Movie Name' and 'Certificate No' in descending order")
+        print(f"Final CSV contains {deduplicated_count} rows")
+    
+    except Exception as e:
+        print(f"Error during deduplication and sorting: {e}")
+
+def extract_recid(url):
+    """Extract and decode the recid parameter from URL."""
+    parsed = urlparse(url)
+    query_params = parse_qs(parsed.query)
+    recid = query_params.get('recid', [''])[0]
+    try:
+        # Decode base64 and convert to string
+        decoded = base64.b64decode(recid).decode('utf-8')
+        # Replace forward slashes with underscores
+        decoded = decoded.replace('/', '_')
+        return decoded
+    except:
+        print(f"Error decoding recid for URL: {url}")
+        return None
 
 def main():
     # Parse command line arguments
@@ -120,6 +184,9 @@ def main():
     # Output failed files list
     failed_files_output = args.failed_files
     
+    # Recent recids file
+    recent_file = args.recent_file
+    
     # Maximum number of files to process (0 means no limit)
     max_files = args.limit
     
@@ -128,21 +195,81 @@ def main():
         print(f"Error: Directory {input_dir} does not exist")
         return
     
-    # Get all HTML files
-    html_files = list(input_dir.glob('*.html'))
-    total_files = len(html_files)
+    # Get all HTML files or filter by recent recids
+    html_files = []
     
-    # Apply file limit if specified
-    if max_files > 0 and total_files > max_files:
-        print(f"Limiting to {max_files} files out of {total_files} available")
-        html_files = html_files[:max_files]
+    if args.all:
+        # Process all HTML files in the input directory
+        html_files = list(input_dir.glob('*.html'))
+        print(f"Found {len(html_files)} HTML files in directory")
+        
         total_files = len(html_files)
+        
+        if total_files == 0:
+            print("No HTML files found, nothing to process")
+            return
+            
+        # Apply file limit if specified
+        if max_files > 0 and total_files > max_files:
+            print(f"Limiting to {max_files} files out of {total_files} available")
+            html_files = html_files[:max_files]
+            total_files = len(html_files)
     else:
-        print(f"Found {total_files} HTML files to process")
+        # Check if recent file exists
+        if not os.path.exists(recent_file):
+            print(f"Error: Recent file {recent_file} does not exist")
+            return
+        
+        # Load recent recids from the CSV file
+        recent_recids = set()
+        try:
+            with open(recent_file, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                if 'recid' in reader.fieldnames:
+                    for row in reader:
+                        if 'recid' in row and row['recid']:
+                            recent_recids.add(row['recid'])
+                elif 'URL' in reader.fieldnames:
+                    for row in reader:
+                        if 'URL' in row and row['URL']:
+                            recid = extract_recid(row['URL'])
+                            if recid:
+                                recent_recids.add(recid)
+                else:
+                    print(f"Error: Neither 'recid' nor 'URL' column found in {recent_file}")
+                    return
+            
+            print(f"Loaded {len(recent_recids)} recent recids from {recent_file}")
+        except Exception as e:
+            print(f"Error loading recent recids: {e}")
+            return
+        
+        if not recent_recids:
+            print("No recent recids found, nothing to process")
+            return
+        
+        # Filter HTML files to only those matching recent recids
+        html_files = []
+        for recid in recent_recids:
+            file_path = input_dir / f"{recid}.html"
+            if file_path.exists():
+                html_files.append(file_path)
+        
+        total_files = len(html_files)
+        print(f"Found {total_files} HTML files matching recent recids")
+        
+        if total_files == 0:
+            print("No matching HTML files found, nothing to process")
+            return
+        
+        # Apply file limit if specified
+        if max_files > 0 and total_files > max_files:
+            print(f"Limiting to {max_files} files out of {total_files} available")
+            html_files = html_files[:max_files]
+            total_files = len(html_files)
     
-    # Create csv directory if it doesn't exist
+    # Create directories if they don't exist
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
-    os.makedirs(os.path.dirname(failed_files_output), exist_ok=True)
     
     # Counters for reporting
     processed_files = 0
@@ -179,8 +306,12 @@ def main():
             failed_files += 1
     
     # Now write all data to CSV
-    print("\nWriting all data to CSV...")
-    total_records = save_data_to_csv(all_data, output_file)
+    print("\nWriting data to CSV...")
+    total_records = save_data_to_csv(all_data, output_file, args.append)
+    
+    # Deduplicate and sort the output file
+    print("\nDeduplicating and sorting the output file...")
+    deduplicate_and_sort_csv(output_file)
     
     # Save failed files list
     if failed_files_list:
@@ -193,7 +324,7 @@ def main():
     print(f"  Total files processed: {processed_files}/{total_files}")
     print(f"  Failed files: {failed_files}")
     print(f"  Files with no table: {len(failed_files_list)}")
-    print(f"  Total records extracted: {total_records}")
+    print(f"  Total new records extracted: {total_records}")
     print(f"  Total processing time: {elapsed_time:.2f} seconds")
     print(f"  Average processing time per file: {elapsed_time/total_files:.4f} seconds")
     print(f"  Data saved to: {output_file}")

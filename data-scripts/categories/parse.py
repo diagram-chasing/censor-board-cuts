@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 import re
 
 # Output CSV file
-output_file = 'films.csv'
+output_file = '../../data/raw/recent.csv'
 
 # Create a set to store unique film entries
 unique_films = set()

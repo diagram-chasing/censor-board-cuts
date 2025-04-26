@@ -55,7 +55,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Read CSV and process URLs
-    with open('films.csv', 'r', encoding='utf-8') as csvfile:
+    with open('../../data/raw/recent.csv', 'r', encoding='utf-8') as csvfile:
         reader = csv.DictReader(csvfile)
         total = 0
         success = 0

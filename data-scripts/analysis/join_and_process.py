@@ -6,13 +6,9 @@ import time
 import hashlib
 import json
 from datetime import datetime
-from pathlib import Path
-import pyarrow as pa
-import pyarrow.parquet as pq
 import logging
 import warnings
 import argparse
-import random
 
 # Suppress specific warnings
 warnings.filterwarnings('ignore', category=FutureWarning, module='pandas.core.strings.object_array')
@@ -43,8 +39,8 @@ SITE_DATA_DIR = os.path.join(BASE_OUTPUT_DIR, "site_data")
 CLEANED_MODS_OUTPUT_PATH = os.path.join(INDIVIDUAL_DATA_DIR, "modifications_cleaned.csv")
 CLEANED_META_OUTPUT_PATH = os.path.join(INDIVIDUAL_DATA_DIR, "metadata_cleaned.csv")
 COMPLETE_DATA_CSV_PATH = os.path.join(INDIVIDUAL_DATA_DIR, "metadata_modifications.csv")
-SITE_DATA_PARQUET_PATH = os.path.join(SITE_DATA_DIR, "metadata_modifications.parquet")
-LAST_N_CSV_PATH = os.path.join(SITE_DATA_DIR, "recent_movies.csv")
+SEARCH_CSV_PATH = os.path.join(SITE_DATA_DIR, "search.csv")
+LAST_N_CSV_PATH = os.path.join(SITE_DATA_DIR, "recent.csv")
 LAST_N_COUNT = 500  # Number of unique movies/certificates
 
 # File for tracking data file hashes
@@ -98,7 +94,7 @@ def should_skip_processing():
                 os.path.exists(CLEANED_MODS_OUTPUT_PATH) and
                 os.path.exists(CLEANED_META_OUTPUT_PATH) and
                 os.path.exists(COMPLETE_DATA_CSV_PATH) and
-                os.path.exists(SITE_DATA_PARQUET_PATH) and
+                os.path.exists(SEARCH_CSV_PATH) and
                 os.path.exists(LAST_N_CSV_PATH)
 
             )
@@ -395,8 +391,8 @@ def clean_modifications(df, description_col='description'):
 
 def clean_embedded_content(df):
     """
-    Cleans HTML/CSS, extracts basic info from film names, prioritizes language column.
-    IMPROVED to match R script's language extraction logic.
+    Cleans HTML/CSS, extracts basic info from film names.
+    Uses the existing language column without trying to extract from film name.
     
     Args:
         df: DataFrame with film data
@@ -405,7 +401,7 @@ def clean_embedded_content(df):
         DataFrame with cleaned columns
     """
     start_time = time.time()
-    logger.info("Cleaning embedded content and extracting film/language data...")
+    logger.info("Cleaning embedded content and extracting film data...")
     
     # Create a copy to avoid modifying the original during processing
     result = df.copy()
@@ -453,62 +449,28 @@ def clean_embedded_content(df):
         result['has_embedded_table'] = False
     
     # Extract base film name
-    if 'film_name_full' in result.columns:
+    if 'movie_name' in result.columns:
         # Apply regex replace only to non-NA values
-        mask = result['film_name_full'].notna()
+        mask = result['movie_name'].notna()
         result['film_base_name'] = np.nan  # Default value
         if mask.any():
-            result.loc[mask, 'film_base_name'] = result.loc[mask, 'film_name_full'].str.replace(
+            result.loc[mask, 'film_base_name'] = result.loc[mask, 'movie_name'].str.replace(
                 r'\s*\(.*$', '', regex=True
             ).str.strip()
         
         # Replace empty strings with NA
         result['film_base_name'] = result['film_base_name'].replace('', np.nan)
-        
-        # Use film_name as fallback
-        if 'film_name' in result.columns:
-            fallback_mask = result['film_base_name'].isna() & result['film_name'].notna()
-            if fallback_mask.any():
-                result.loc[fallback_mask, 'film_base_name'] = result.loc[fallback_mask, 'film_name']
-    elif 'film_name' in result.columns:
-        result['film_base_name'] = result['film_name']
     else:
         result['film_base_name'] = np.nan
     
-    # Initialize primary_language column
-    result['primary_language'] = np.nan
-    
-    # Extract language from film_name_full safely
-    if 'film_name_full' in result.columns and result['film_name_full'].notna().any():
-        def extract_language_from_full(full_name):
-            if pd.isna(full_name):
-                return np.nan
-                
-            # Pattern to match "(LANGUAGE)" in the film name
-            match = re.search(r'\(([A-Za-z\s-]+?)\)', str(full_name))
-            if match:
-                potential_lang = match.group(1).strip().upper()
-                
-                # Filter out non-language entries
-                is_format = re.search(r'COLOR|2-D|3-D|SCOPE|SCREEN|B/W|SUBTITLE', potential_lang, re.IGNORECASE)
-                if not is_format and len(potential_lang) < 20:
-                    return potential_lang
-            
-            return np.nan
-        
-        # Apply extraction only to non-NA values
-        mask = result['film_name_full'].notna()
-        if mask.any():
-            result.loc[mask, 'primary_language'] = result.loc[mask, 'film_name_full'].apply(extract_language_from_full)
-    
-    # Use existing language column as fallback safely
+    # Set primary_language to the existing language column
+    # No extraction from film_name_full or other sources
     if 'language' in result.columns:
-        fallback_mask = result['primary_language'].isna() & result['language'].notna()
-        if fallback_mask.any():
-            # Convert to uppercase strings
-            result.loc[fallback_mask, 'primary_language'] = result.loc[fallback_mask, 'language'].astype(str).str.strip().str.upper()
+        result['primary_language'] = result['language']
+    else:
+        result['primary_language'] = np.nan
     
-    # Standardize language capitalization
+    # Standardize language capitalization if it exists
     if 'primary_language' in result.columns and result['primary_language'].notna().any():
         # Proper title case for language names
         def standardize_language(lang):
@@ -674,6 +636,7 @@ def main():
             rating_map = {}
             cbfc_file_no_map = {}
             cert_date_map = {}
+            movie_name_map = {}
             
             for _, row in categories_data.iterrows():
                 if pd.notna(row['normalized_cert_no']):
@@ -684,6 +647,10 @@ def main():
                     # Map rating if available
                     if pd.notna(row['Movie Category']):
                         rating_map[row['normalized_cert_no']] = row['Movie Category']
+                    
+                    # Map movie name if available
+                    if pd.notna(row['Movie Name']):
+                        movie_name_map[row['normalized_cert_no']] = row['Movie Name']
                     
                     # Map cbfc_file_no if available
                     if pd.notna(row['source_file']):
@@ -713,13 +680,17 @@ def main():
             for idx, row in metadata_cleaned.iterrows():
                 cert_no = row['normalized_cert_no']
                 
-                # Override language if available in categories
+                # Use language directly from categories file
                 if cert_no in language_map and pd.notna(language_map[cert_no]):
                     metadata_cleaned.at[idx, 'language'] = language_map[cert_no]
                 
                 # Add rating from categories
                 if cert_no in rating_map and pd.notna(rating_map[cert_no]):
                     metadata_cleaned.at[idx, 'rating'] = rating_map[cert_no]
+                
+                # Add movie name from categories
+                if cert_no in movie_name_map and pd.notna(movie_name_map[cert_no]):
+                    metadata_cleaned.at[idx, 'movie_name'] = movie_name_map[cert_no]
                 
                 # Add cbfc_file_no from categories
                 if cert_no in cbfc_file_no_map and pd.notna(cbfc_file_no_map[cert_no]):
@@ -763,7 +734,7 @@ def main():
     
     # Check ID columns
     for df_name, df, id_col in [('metadata', metadata_cleaned, 'id'), 
-                               ('modifications', modifications_cleaned, 'certificate_id')]:
+                               ('modifications', modifications_cleaned, 'id')]:
         if id_col not in df.columns:
             raise ValueError(f"Required ID column '{id_col}' not found in {df_name} data.")
         if not pd.api.types.is_string_dtype(df[id_col]):
@@ -774,7 +745,7 @@ def main():
     logger.info("Joining modifications and metadata...")
     
     # Define columns to select from each table
-    cols_from_meta = ['id', 'film_name', 'film_name_full', 'language', 'duration_secs',
+    cols_from_meta = ['id', 'certificate_id', 'movie_name', 'film_name', 'film_name_full', 'language', 'duration_secs',
                     'cert_date_parsed', 'cert_no', 'category', 'format', 'applicant', 'certifier',
                     'rating', 'cbfc_file_no']
     cols_from_meta = [col for col in cols_from_meta if col in metadata_cleaned.columns]
@@ -783,7 +754,7 @@ def main():
     censorship_data = pd.merge(
         modifications_cleaned,
         metadata_cleaned[cols_from_meta],
-        left_on='certificate_id',
+        left_on='id',
         right_on='id',
         how='left'
     )
@@ -798,7 +769,7 @@ def main():
     
     # Consolidate potentially duplicated metadata within certificate IDs
     logger.info("Consolidating metadata within certificate IDs...")
-    metadata_cols = ['film_name', 'film_base_name', 'film_name_full', 'language',
+    metadata_cols = ['id', 'certificate_id', 'movie_name', 'film_name', 'film_base_name', 'film_name_full', 'language',
                     'primary_language', 'duration_secs', 'cert_date_parsed', 'cert_no',
                     'category', 'format', 'applicant', 'certifier', 'rating', 'cbfc_file_no']
     metadata_cols = [col for col in metadata_cols if col in censorship_data.columns]
@@ -846,8 +817,8 @@ def main():
     # Select and rename final columns
     logger.info("Selecting and reformatting final columns...")
     final_cols = [
-        'certificate_id', 'film_base_name', 'film_name_full',
-        'primary_language',
+        'id', 'certificate_id_x', 'movie_name', 'movie_base_name',
+        'language',  # Use language directly without primary_language
         'duration_secs',
         'mod_tags', 'content_tags', 'type_tags',
         'description',
@@ -856,14 +827,15 @@ def main():
         'cert_date_parsed', 'cert_no',
         'applicant', 'certifier', 'rating', 'cbfc_file_no'
     ]
+    print(censorship_data.columns)
     final_cols = [col for col in final_cols if col in censorship_data.columns]
     censorship_data = censorship_data[final_cols]
     
     # Rename columns
     rename_dict = {
         'cert_date_parsed': 'cert_date',
-        'film_base_name': 'film_name',
-        'primary_language': 'language'
+        'movie_base_name': 'film_base_name',
+        'certificate_id_x': 'certificate_id'
     }
     for old_name, new_name in rename_dict.items():
         if old_name in censorship_data.columns:
@@ -968,26 +940,78 @@ def main():
     except Exception as e:
         logger.error(f"Error saving complete cleaned data CSV: {str(e)}")
     
-    # 4. Save complete joined and cleaned data Parquet
+    # 4. Save search.csv with only id, movie_name, and language columns
     try:
-        # Convert categorical columns to string for parquet compatibility
-        parquet_data = censorship_data.copy()
-        for col in parquet_data.select_dtypes(include=['category']).columns:
-            parquet_data[col] = parquet_data[col].astype(str)
+        search_columns = ['id', 'movie_name', 'language']
+        search_columns = [col for col in search_columns if col in censorship_data.columns]
+        search_data = censorship_data[search_columns].drop_duplicates()
         
-        # Handle NaNs in categorical columns for parquet compatibility
-        for col in parquet_data.columns:
-            if pd.api.types.is_object_dtype(parquet_data[col]):
-                parquet_data[col] = parquet_data[col].fillna('')
+        # Handle NAs in categorical columns
+        for col in search_data.columns:
+            if pd.api.types.is_categorical_dtype(search_data[col]):
+                search_data[col] = search_data[col].astype(str)
+            if pd.api.types.is_object_dtype(search_data[col]):
+                search_data[col] = search_data[col].fillna('')
         
-        # Save as parquet
-        table = pa.Table.from_pandas(parquet_data)
-        pq.write_table(table, SITE_DATA_PARQUET_PATH, compression='zstd', compression_level=5)
-        logger.info(f"Saved cleaned data as Parquet to {SITE_DATA_PARQUET_PATH}")
+        search_data.to_csv(SEARCH_CSV_PATH, index=False)
+        logger.info(f"Saved search data ({len(search_data):,} rows) to {SEARCH_CSV_PATH}")
     except Exception as e:
-        logger.error(f"Error saving Parquet file: {str(e)}")
+        logger.error(f"Error saving search CSV: {str(e)}")
     
-    # 5. Create and save the 'last N' movies CSV
+    # 5. Save yearwise CSV files
+    try:
+        # Extract year from id if available
+        if 'id' in censorship_data.columns:
+            # Function to extract year from id
+            def extract_year(cert_id):
+                if pd.isna(cert_id):
+                    return None
+                
+                cert_id = str(cert_id)
+                
+                # Look for patterns like "029220" to extract 2022 - could be embedded in larger sets of digits
+                # This will search for the pattern anywhere in the string
+                year_match = re.search(r'029(\d{2})00', cert_id)
+                if year_match:
+                    year = "20" + year_match.group(1)
+                    # Validate reasonable year range (2000-2030)
+                    if 2000 <= int(year) <= 2030:
+                        return year
+                
+                # If no matches, return None
+                return None
+            
+            # Add extracted year column
+            censorship_data['extracted_year'] = censorship_data['id'].apply(extract_year)
+            
+            # Count occurrences of each year for logging
+            year_counts = censorship_data['extracted_year'].value_counts().sort_index()
+            logger.info(f"Detected years from IDs:")
+            for year, count in year_counts.items():
+                if year is not None:
+                    logger.info(f"  {year}: {count:,} rows")
+            
+            # Count rows with no year detected
+            no_year_count = censorship_data['extracted_year'].isna().sum()
+            if no_year_count > 0:
+                logger.info(f"  No year detected: {no_year_count:,} rows")
+            
+            # Group by year and save separate files
+            for year, year_data in censorship_data.groupby('extracted_year'):
+                if year is not None:
+                    year_file_path = os.path.join(SITE_DATA_DIR, f"{year}.csv")
+                    year_data = year_data.drop('extracted_year', axis=1)  # Remove the temporary column
+                    year_data.to_csv(year_file_path, index=False)
+                    logger.info(f"Saved {year} data ({len(year_data):,} rows) to {year_file_path}")
+            
+            # Remove temporary column
+            censorship_data = censorship_data.drop('extracted_year', axis=1)
+        else:
+            logger.warning("id column not found. Cannot create yearwise CSV files.")
+    except Exception as e:
+        logger.error(f"Error saving yearwise CSV files: {str(e)}")
+    
+    # 6. Create and save the 'last N' movies CSV
     logger.info(f"Creating last {LAST_N_COUNT} movies CSV...")
     if 'cert_date' in censorship_data.columns and 'certificate_id' in censorship_data.columns:
         # Find the latest date for each unique certificate_id

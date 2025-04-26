@@ -19,6 +19,8 @@ parser.add_argument('--characters', '-c', type=str, default='A-Z',
                    help='Characters to search for (e.g. "A,B,C" or "A-Z" or "A")')
 parser.add_argument('--output-dir', '-o', type=str, default='raw',
                    help='Directory to save results')
+parser.add_argument('--from-date', type=str, default='',
+                   help='Start date for search in DD/MM/YYYY format')
 parser.add_argument('--delay-min', type=int, default=5,
                    help='Minimum delay between requests in seconds')
 parser.add_argument('--delay-max', type=int, default=8,
@@ -228,7 +230,7 @@ def search_films_by_character(character, max_attempts=None):
             
             params = {
                 'title': character,
-                'from_date': '',
+                'from_date': args.from_date,
                 'to_date': '',
                 'languages': '',
                 'captcha': captcha_text,
@@ -278,6 +280,10 @@ def search_films_by_character(character, max_attempts=None):
 def main():
     characters = parse_characters(args.characters)
     logging.info(f"Will process the following characters: {', '.join(characters)}")
+    if args.from_date:
+        logging.info(f"Searching from date: {args.from_date}")
+    else:
+        logging.info("No start date specified, searching all dates")
     
     for char in characters:
         logging.info(f"Processing character: {char}")
@@ -297,4 +303,5 @@ if __name__ == "__main__":
     logging.info("Starting CBFC film search...")
     logging.info(f"Output directory: {args.output_dir}")
     main()
-    logging.info("Search completed. Results saved in output directory.")
+    date_range_msg = f"from {args.from_date}" if args.from_date else "with no date restriction"
+    logging.info(f"Search completed {date_range_msg}. Results saved in {args.output_dir} directory.")

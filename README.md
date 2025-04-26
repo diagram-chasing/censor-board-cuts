@@ -16,13 +16,13 @@ More available in the [data folder](/data/).
 
 ## Data Collection
 
-The scraper (data-scripts/scrape/) collects:
+The scraper (data-scripts/certificates/) collects:
 
 - Film metadata (title, language, duration, etc.)
 - Certification details
 - Content modifications/cuts
 
-More information is available in the [scrape/README.md](data-scripts/scrape/README.md) file. Each row is incrementally saved to the relevant CSV files and the scraper can resume from the last processed ID (the methodology is described in the README).
+More information is available in the [certificates/README.md](data-scripts/certificates/README.md) file. Each row is incrementally saved to the relevant CSV files and the scraper can resume from the last processed ID (the methodology is described in the README).
 
 ## Analysis
 
