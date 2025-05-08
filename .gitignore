@@ -20,4 +20,6 @@ scripts/categories/cbfc_scraper.log
 scripts/categories/pipeline.log
 scripts/categories/raw
 
+scripts/imdb/imdb_fetch.log
+
 data/individual_files
