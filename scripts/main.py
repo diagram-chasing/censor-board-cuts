@@ -55,6 +55,7 @@ def main():
     parser = argparse.ArgumentParser(description='Run the complete data pipeline')
     parser.add_argument('--skip-categories', action='store_true', help='Skip running the categories script')
     parser.add_argument('--skip-certificates', action='store_true', help='Skip running the certificates script')
+    parser.add_argument('--skip-imdb', action='store_true', help='Skip running the IMDB script')
     parser.add_argument('--skip-processing', action='store_true', help='Skip running the data processing script')
     parser.add_argument('--force-processing', action='store_true', help='Force data processing even if input files have not changed')
     args = parser.parse_args()
@@ -97,9 +98,9 @@ def main():
     else:
         logger.info("Skipping certificates script as requested")
     
-    # Step 3: Run join_and_process.py
+    # Step 3: Run analysis main.py
     if not args.skip_processing:
-        process_script = project_root / "scripts" / "analysis" / "join_and_process.py"
+        process_script = project_root / "scripts" / "analysis" / "main.py"
         process_dir = process_script.parent
         
         if not process_script.exists():
@@ -116,6 +117,22 @@ def main():
             return False
     else:
         logger.info("Skipping data processing as requested")
+
+    # Step 4: Run IMDB main.py
+    if not args.skip_imdb:
+        imdb_script = project_root / "scripts" / "imdb" / "main.py"
+        imdb_dir = imdb_script.parent
+        
+        if not imdb_script.exists():
+            logger.error(f"IMDB script not found at {imdb_script}")
+            return False
+            
+        logger.info("Running IMDB script...")
+        if not run_script(imdb_script, cwd=imdb_dir):
+            logger.error("IMDB script failed. Pipeline stopped.")
+            return False
+    else:
+        logger.info("Skipping IMDB script as requested")
     
     logger.info("Complete data pipeline finished successfully!")
     return True
