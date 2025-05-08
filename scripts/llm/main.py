@@ -7,7 +7,6 @@ import time
 import argparse
 from dotenv import load_dotenv
 import google.generativeai as genai
-from google.ai.generativelanguage_v1beta.types import content
 from tqdm import tqdm
 import logging
 
@@ -23,104 +22,77 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Configure Gemini API
-genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
-# Create the model with the same configuration as in tagging.py
-generation_config = {
-  "temperature": 0.2,
-  "top_p": 0.95,
-  "top_k": 40,
-  "max_output_tokens": 8192,
-  "response_schema": content.Schema(
-    type = content.Type.OBJECT,
-    description = "Schema for representing the analysis of media censorship actions described in text.",
-    required = ["cleaned_description", "action_types", "content_types", "media_elements", "censored_items", "reason"],
-    properties = {
-      "cleaned_description": content.Schema(
-        type = content.Type.STRING,
-        description = "The original description text, cleaned of timestamps, translated to English if necessary, and formatted for clarity, preserving all relevant details.",
-      ),
-      "action_types": content.Schema(
-        type = content.Type.ARRAY,
-        description = "A unique list of all censorship actions identified across all censored items.",
-        items = content.Schema(
-          type = content.Type.STRING,
-          enum = ["audio_mute", "audio_level", "audio_replace", "audio_effect", "visual_blur", "visual_censor", "visual_effect", "visual_adjust", "visual_framerate", "deletion", "insertion", "overlay", "reduction", "replacement", "translation", "spacing", "warning_disclaimer", "certification"],
-        ),
-      ),
-      "content_types": content.Schema(
-        type = content.Type.ARRAY,
-        description = "A unique list of all types of content identified as being censored across all censored items.",
-        items = content.Schema(
-          type = content.Type.STRING,
-          enum = ["violence_physical", "violence_destruction", "sexual_explicit", "sexual_suggestive", "substance_use", "substance_brand", "profanity", "religious", "social_commentary", "political", "group_reference"],
-        ),
-      ),
-      "media_elements": content.Schema(
-        type = content.Type.ARRAY,
-        description = "A unique list of all types of media elements affected by censorship across all censored items.",
-        items = content.Schema(
-          type = content.Type.STRING,
-          enum = ["song_music", "dialogue_speech", "scene_visual", "text_title", "brand_logo", "technical_meta", "certificate_disclaimer"],
-        ),
-      ),
-      "censored_items": content.Schema(
-        type = content.Type.ARRAY,
-        description = "An array detailing each distinct instance of censorship identified in the description.",
-        items = content.Schema(
-          type = content.Type.OBJECT,
-          required = ["content", "reference", "action", "content_types", "media_element", "replacement"],
-          properties = {
-            "content": content.Schema(
-              type = content.Type.STRING,
-              description = "A description of the specific content or context being censored.",
-            ),
-            "reference": content.Schema(
-              type = content.Type.STRING,
-              description = "The specific word, stemmed profanity root, name (person/group/brand), or concept identifier that was the DIRECT TARGET of censorship. Null if not applicable (e.g., general scene blur).",
-              nullable = True,
-            ),
-            "action": content.Schema(
-              type = content.Type.STRING,
-              description = "The specific censorship action applied to this item.",
-              enum = ["audio_mute", "audio_level", "audio_replace", "audio_effect", "visual_blur", "visual_censor", "visual_effect", "visual_adjust", "visual_framerate", "deletion", "insertion", "overlay", "reduction", "replacement", "translation", "spacing", "warning_disclaimer", "certification"],
-            ),
-            "content_types": content.Schema(
-              type = content.Type.ARRAY,
-              description = "A list of all relevant content types for this specific censored item.",
-              items = content.Schema(
-                type = content.Type.STRING,
-                enum = ["violence_physical", "violence_destruction", "sexual_explicit", "sexual_suggestive", "substance_use", "substance_brand", "profanity", "religious", "social_commentary", "political", "group_reference"],
-              ),
-            ),
-            "media_element": content.Schema(
-              type = content.Type.STRING,
-              description = "The specific media element affected by this censorship action.",
-              enum = ["song_music", "dialogue_speech", "scene_visual", "text_title", "brand_logo", "technical_meta", "certificate_disclaimer"],
-            ),
-            "replacement": content.Schema(
-              type = content.Type.STRING,
-              description = "Description of what replaced the censored content, if applicable (e.g., 'bleep sound', 'blurred area', 'silence'). Null if no replacement occurred or none was specified.",
-              nullable = True,
-            ),
-          },
-        ),
-      ),
-      "reason": content.Schema(
-        type = content.Type.STRING,
-        description = "The explicitly stated reason for the censorship, if provided in the description text. Null if no reason is mentioned.",
-        nullable = True,
-      ),
-    },
-  ),
-  "response_mime_type": "application/json",
-}
+# Create the model with the updated schema from the prompt
+def setup_model():
+    from google import genai
+    from google.genai import types
 
-model = genai.GenerativeModel(
-  model_name="gemini-1.5-flash-8b",
-  generation_config=generation_config,
-  system_instruction="You are a specialized text analysis system designed to identify, classify, and extract specific details about media censorship actions described in text. Your analysis must be precise, adhering strictly to the provided schema and classification categories.\n\n## Task Definition\n\nYour goal is to:\n1. Analyze the provided censorship description text.\n2. Identify specific elements that were censored (including words, names, concepts, visuals, sounds).\n3. For each censored element, capture the **specific reference** (e.g., the actual word, stemmed profanity, the **specific person, group, or brand name** that was the target of censorship).\n4. Classify the censorship actions, the type of content being censored, and the media element affected for each censored item.\n5. Return a single, complete, and valid JSON object adhering to the specified schema. **Only capture named entities (persons, groups, brands) if they are the direct subject of a censorship action, within the details of that action.**\n\n## Classification Categories\n\nUse ONLY these predefined values:\n\n| Field | Valid Values |\n|-------|-------------|\n| **action_types** | audio_mute, audio_level, audio_replace, audio_effect, visual_blur, visual_censor, visual_effect, visual_adjust, visual_framerate, deletion, insertion, overlay, reduction, replacement, translation, spacing, warning_disclaimer, certification |\n| **content_types** | violence_physical, violence_destruction, sexual_explicit, sexual_suggestive, substance_use, substance_brand, profanity, religious, social_commentary, political, group_reference |\n| **media_elements** | song_music, dialogue_speech, scene_visual, text_title, brand_logo, technical_meta, certificate_disclaimer |\n\n## Output Format Requirements\n\nThe response MUST be a single valid JSON object with this precise structure:\n```json\n{\n  \"cleaned_description\": \"string\", // REQUIRED: Cleaned, translated (if needed) description without timestamps.\n  \"action_types\": [\"string\"], // REQUIRED: All unique action_types used across all censored_items.\n  \"content_types\": [\"string\"], // REQUIRED: All unique content_types across all censored_items.\n  \"media_elements\": [\"string\"], // REQUIRED: All unique media_elements across all censored_items.\n  \"censored_items\": [ // REQUIRED: Array of distinct censored content instances.\n    {\n      \"content\": \"string\", // REQUIRED: Description of the specific content/context being censored.\n      \"reference\": \"string\" or null, // REQUIRED: The specific word, stemmed profanity root, name (person/group/brand), or concept identifier that was THE DIRECT TARGET of censorship. Null if not applicable (e.g., general scene blur).\n      \"action\": \"string\", // REQUIRED: Must be one of the action_types enum values.\n      \"content_types\": [\"string\"], // REQUIRED: Must be from content_types enum. List all relevant types.\n      \"media_element\": \"string\", // REQUIRED: Must be one of the media_elements enum values.\n      \"replacement\": \"string\" or null // What replaced the content, if any (e.g., \"bleep\", \"blurred text\"). Null if no replacement or not specified.\n    }\n  ],\n  \"reason\": \"string\" or null // Stated reason for censorship, if provided in the description. Null otherwise.\n}\n",
-)
+    client = genai.Client(
+        api_key=os.environ.get("GEMINI_API_KEY"),
+    )
+
+    # Updated schema based on the new prompt
+    model = "gemini-2.0-flash-lite"
+    response_schema = types.Schema(
+        type=types.Type.OBJECT,
+        required=["cleaned_description", "reference", "action", "content_types", "media_element"],
+        properties={
+            "cleaned_description": types.Schema(
+                type=types.Type.STRING,
+                description="Rewritten description in clear, human-readable language without timestamps.",
+            ),
+            "reference": types.Schema(
+                type=types.Type.UNION,
+                description="The specific word, entity, or concept censored. Can be a single string, array of strings, or null if no specific reference.",
+                union_types=[
+                    types.Schema(type=types.Type.STRING),
+                    types.Schema(
+                        type=types.Type.ARRAY,
+                        items=types.Schema(type=types.Type.STRING),
+                    ),
+                    types.Schema(type=types.Type.NULL),
+                ],
+            ),
+            "action": types.Schema(
+                type=types.Type.STRING,
+                description="The type of censorship action performed.",
+                enum=[
+                    "deletion", 
+                    "insertion", 
+                    "replacement", 
+                    "audio_modification", 
+                    "visual_modification", 
+                    "text_modification", 
+                    "content_overlay"
+                ],
+            ),
+            "content_types": types.Schema(
+                type=types.Type.ARRAY,
+                description="Types of content being censored (1-2 most relevant categories).",
+                items=types.Schema(
+                    type=types.Type.STRING,
+                    enum=[
+                        "violence", 
+                        "sexual_explicit", 
+                        "sexual_suggestive", 
+                        "substance", 
+                        "profanity", 
+                        "political", 
+                        "religious", 
+                        "identity_reference"
+                    ],
+                ),
+            ),
+            "media_element": types.Schema(
+                type=types.Type.STRING,
+                description="The media element affected by the censorship action.",
+                enum=["music", "visual_scene", "text_dialogue", "metadata", "other"],
+            ),
+        },
+    )
+    return client, model, response_schema
 
 def process_description(description, timeout=30):
     """Process a description using the Gemini model and return the JSON response."""
@@ -128,93 +100,53 @@ def process_description(description, timeout=30):
         return None
     
     try:
-        # Create a simple mock response for testing
-        # This allows you to test the script without making API calls
-        if os.environ.get("USE_MOCK_RESPONSE", "false").lower() == "true":
-            logger.info("Using mock response for testing")
-            return create_mock_response(description)
+        # Set up the model and client
+        client, model, response_schema = setup_model()
         
         # Set a timeout for the API call
         start_time = time.time()
-        chat_session = model.start_chat(history=[])
+        
+        # Setup the generation config
+        generate_content_config = genai.types.GenerateContentConfig(
+            temperature=0.6,
+            response_mime_type="application/json",
+            response_schema=response_schema,
+            system_instruction=genai.types.Part.from_text(text=get_system_instruction())
+        )
+        
+        # Create the content
+        contents = [
+            genai.types.Content(
+                role="user",
+                parts=[
+                    genai.types.Part.from_text(text=description),
+                ],
+            ),
+        ]
         
         # Use a timeout to prevent hanging
-        response = None
         try:
-            response = chat_session.send_message(description)
+            response = client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=generate_content_config,
+            )
             elapsed_time = time.time() - start_time
             logger.debug(f"API call completed in {elapsed_time:.2f}s")
+            
+            if hasattr(response, 'text') and response.text:
+                return json.loads(response.text)
+            elif hasattr(response, 'parts') and response.parts:
+                return json.loads(response.parts[0].text)
+            else:
+                logger.warning("Empty response from API")
+                return None
         except Exception as e:
             logger.error(f"API call failed: {e}")
-            return None
-        
-        if response and response.text:
-            return json.loads(response.text)
-        else:
-            logger.warning("Empty response from API")
             return None
     except Exception as e:
         logger.error(f"Error processing description: {e}")
         return None
-
-def create_mock_response(description):
-    """Create a mock response for testing purposes."""
-    # Simple mock response based on the description
-    if "blur" in description.lower():
-        return {
-            "cleaned_description": description,
-            "action_types": ["visual_blur"],
-            "content_types": ["substance_brand"],
-            "media_elements": ["brand_logo"],
-            "censored_items": [
-                {
-                    "content": "Liquor label and brand names",
-                    "reference": None,
-                    "action": "visual_blur",
-                    "content_types": ["substance_brand"],
-                    "media_element": "brand_logo",
-                    "replacement": None
-                }
-            ],
-            "reason": None
-        }
-    elif "mute" in description.lower() or "bleep" in description.lower():
-        return {
-            "cleaned_description": description,
-            "action_types": ["audio_mute", "audio_replace"],
-            "content_types": ["profanity"],
-            "media_elements": ["dialogue_speech"],
-            "censored_items": [
-                {
-                    "content": "Profanity in dialogue",
-                    "reference": "profanity",
-                    "action": "audio_mute",
-                    "content_types": ["profanity"],
-                    "media_element": "dialogue_speech",
-                    "replacement": "bleep sound"
-                }
-            ],
-            "reason": None
-        }
-    else:
-        # Generic response
-        return {
-            "cleaned_description": description,
-            "action_types": ["deletion"],
-            "content_types": ["profanity"],
-            "media_elements": ["dialogue_speech"],
-            "censored_items": [
-                {
-                    "content": "Content in description",
-                    "reference": None,
-                    "action": "deletion",
-                    "content_types": ["profanity"],
-                    "media_element": "dialogue_speech",
-                    "replacement": None
-                }
-            ],
-            "reason": None
-        }
 
 def flatten_json_for_csv(json_data, original_row):
     """Convert the JSON response into a format suitable for CSV output."""
@@ -224,31 +156,43 @@ def flatten_json_for_csv(json_data, original_row):
     # Start with the original row data
     flattened = original_row.copy()
     
-    # Add the top-level fields
+    # Extract data from the updated schema
     flattened['ai_cleaned_description'] = json_data.get('cleaned_description', '')
-    flattened['ai_action_types'] = ';'.join(json_data.get('action_types', []))
-    flattened['ai_content_types'] = ';'.join(json_data.get('content_types', []))
-    flattened['ai_media_elements'] = ';'.join(json_data.get('media_elements', []))
-    flattened['ai_reason'] = json_data.get('reason', '')
+    flattened['ai_action'] = json_data.get('action', '')
     
-    # Handle censored items - we'll create one row per censored item
-    censored_items = json_data.get('censored_items', [])
-    if not censored_items:
-        return [flattened]
+    # Handle reference field which can be string, array or null
+    reference = json_data.get('reference', None)
+    if isinstance(reference, list):
+        flattened['ai_reference'] = '|'.join([str(r) for r in reference if r is not None])
+    elif reference is not None:
+        flattened['ai_reference'] = str(reference)
+    else:
+        flattened['ai_reference'] = ''
     
-    result_rows = []
-    for i, item in enumerate(censored_items):
-        item_row = flattened.copy()
-        item_row['censored_item_index'] = i + 1
-        item_row['censored_content'] = item.get('content', '')
-        item_row['censored_reference'] = item.get('reference', '')
-        item_row['censored_action'] = item.get('action', '')
-        item_row['censored_content_types'] = ';'.join(item.get('content_types', []))
-        item_row['censored_media_element'] = item.get('media_element', '')
-        item_row['censored_replacement'] = item.get('replacement', '')
-        result_rows.append(item_row)
+    # Handle content_types array
+    content_types = json_data.get('content_types', [])
+    flattened['ai_content_types'] = '|'.join(content_types) if content_types else ''
     
-    return result_rows
+    # Media element
+    flattened['ai_media_element'] = json_data.get('media_element', '')
+    
+    return [flattened]
+
+def get_system_instruction():
+    """Load the system instruction from prompt.txt in the same folder as the script."""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    prompt_file = os.path.join(current_dir, "prompt.txt")
+    
+    try:
+        if os.path.exists(prompt_file):
+            with open(prompt_file, 'r', encoding='utf-8') as f:
+                return f.read()
+        else:
+            logger.error(f"Prompt file not found at {prompt_file}")
+            raise FileNotFoundError(f"Required prompt file not found: {prompt_file}")
+    except Exception as e:
+        logger.error(f"Error reading prompt file: {e}")
+        raise
 
 def get_processed_ids(processed_log_file):
     """Read the processed IDs log file and return a set of processed (certificate_id, cut_no) tuples"""
@@ -301,16 +245,9 @@ def extract_processed_ids_from_output(output_file):
         logger.error(f"Error extracting processed IDs from output file: {e}")
         return set()
 
-def process_csv(input_file, output_file, log_file=None, limit=None, use_mock=False, rebuild_log=False):
+def process_csv(input_file, output_file, log_file=None, limit=None, rebuild_log=False):
     """Process the CSV file and output the results to a new CSV file,
     saving incrementally and resuming if interrupted."""
-    # Set environment variable for mock responses if needed
-    if use_mock:
-        os.environ["USE_MOCK_RESPONSE"] = "true"
-    else:
-        # Ensure mock response is disabled if not explicitly requested
-        if "USE_MOCK_RESPONSE" in os.environ:
-            del os.environ["USE_MOCK_RESPONSE"]
 
     # Set default log file path if not provided
     if log_file is None:
@@ -342,12 +279,9 @@ def process_csv(input_file, output_file, log_file=None, limit=None, use_mock=Fal
         # Get already processed IDs from log file
         processed_ids = get_processed_ids(log_file)
 
-    # Define columns
-    # Instead of hardcoding original columns, we'll determine them from the input data
+    # Define columns for the new updated schema
     ai_columns = [
-        'ai_cleaned_description', 'ai_action_types', 'ai_content_types', 'ai_media_elements', 'ai_reason',
-        'censored_item_index', 'censored_content', 'censored_reference', 'censored_action',
-        'censored_content_types', 'censored_media_element', 'censored_replacement'
+        'ai_cleaned_description', 'ai_reference', 'ai_action', 'ai_content_types', 'ai_media_element'
     ]
     
     # Read the input CSV file
@@ -423,16 +357,12 @@ def process_csv(input_file, output_file, log_file=None, limit=None, use_mock=Fal
             # Create a row with original data + empty AI fields
             row_dict = row.to_dict()
             
-            # Add AI fields with empty values
-            for ai_col in ai_columns:
-                if ai_col == 'ai_cleaned_description' and json_result:
-                    row_dict[ai_col] = json_result.get('cleaned_description', '')
-                elif ai_col == 'ai_reason' and json_result:
-                    row_dict[ai_col] = json_result.get('reason', '')
-                elif ai_col == 'censored_item_index':
-                    row_dict[ai_col] = pd.NA
+            # Add fields with empty values
+            for col in ai_columns:
+                if col == 'ai_cleaned_description' and json_result:
+                    row_dict[col] = json_result.get('cleaned_description', '')
                 else:
-                    row_dict[ai_col] = ''
+                    row_dict[col] = ''
             
             flattened_rows = [row_dict] # Create a list containing this single row dict
 
@@ -493,7 +423,6 @@ if __name__ == "__main__":
     parser.add_argument('--output', default=None, help='Path to output CSV file')
     parser.add_argument('--log', default=None, help='Path to processed IDs log file')
     parser.add_argument('--limit', type=int, default=None, help='Limit the number of descriptions to process')
-    parser.add_argument('--mock', action='store_true', help='Use mock responses for testing')
     parser.add_argument('--rebuild-log', action='store_true', help='Rebuild the processed IDs log from output file')
     
     args = parser.parse_args()
@@ -518,6 +447,5 @@ if __name__ == "__main__":
         output_file=output_file, 
         log_file=log_file, 
         limit=args.limit, 
-        use_mock=args.mock, 
         rebuild_log=args.rebuild_log
-    ) 
+    )
