@@ -6,7 +6,6 @@ import json
 from imdb import Cinemagoer
 import logging
 from tqdm import tqdm
-import pandas as pd
 
 # Setup logging
 logging.basicConfig(
@@ -47,25 +46,6 @@ def save_completed_ids(completed_ids):
     except Exception as e:
         logger.error(f"Error saving completed IDs: {e}")
 
-def join_csv_files(metadata_file, imdb_file, output_file):
-    """Join metadata and IMDb data using original_id as the key."""
-    try:
-        # Read both CSV files
-        metadata_df = pd.read_csv(metadata_file)
-        imdb_df = pd.read_csv(imdb_file, sep=';')
-
-        # Rename the id column to original_id in metadata_df
-        metadata_df.rename(columns={'id': 'original_id'}, inplace=True)
-        
-        # Join the dataframes on original_id
-        joined_df = pd.merge(metadata_df, imdb_df, on='original_id', how='left')
-        
-        # Save the joined data
-        joined_df.to_csv(output_file, index=False)
-        logger.info(f"Joined data saved to {output_file}")
-    except Exception as e:
-        logger.error(f"Error joining CSV files: {e}")
-
 def main():
     # Create output directory if it doesn't exist
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
@@ -73,10 +53,6 @@ def main():
     # Load completed IDs
     completed_ids = load_completed_ids()
     logger.info(f"Loaded {len(completed_ids)} completed IDs from {COMPLETED_FILE}")
-    
-    # Join files before scraping to get initial state
-    initial_joined_file = "../../data/individual_files/metadata_modifications_imdb.csv"
-    join_csv_files(INPUT_FILE, OUTPUT_FILE, initial_joined_file)
     
     # Initialize the Cinemagoer
     ia = Cinemagoer()
@@ -211,10 +187,6 @@ def main():
                 continue
     
     logger.info(f"IMDb data saved to {OUTPUT_FILE}")
-    
-    # Join files after scraping to get final state
-    final_joined_file = "../../data/individual_files/metadata_modifications_imdb.csv"
-    join_csv_files(INPUT_FILE, OUTPUT_FILE, final_joined_file)
 
 if __name__ == "__main__":
     main()

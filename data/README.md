@@ -4,60 +4,63 @@ This folder contains datasets related to film censorship and modifications made 
 
 ## Main Dataset
 
-- `data.csv`: Consolidated dataset containing film information, censorship details, and metadata. Includes certificate IDs, film names, languages, descriptions of cuts, modification times, certification dates, and classified content categories.
+- `data.csv`: Consolidated dataset containing film information, censorship details, and metadata. Includes certificate IDs, film names, languages, descriptions of cuts, modification times, certification dates, along with IMDb data and AI-processed content classifications.
 
 ### Data Dictionary
 
 | Variable | Type | Description |
 |----------|-----------|-------------|
-| `certificate_id` | string | Unique identifier for the certification, used in the ecinepramaan site |
-| `film_name` | string | Short name of the film |
-| `film_name_full` | string | Complete film name with language and format details |
+| `id` | integer | Unique identifier for the certification, used in the ecinepramaan site |
+| `certificate_id` | string | Unique identifier for the certification, used in the cbfcindia site |
+| `movie_name` | string | Name of the film |
 | `language` | string | Language of the film |
-| `duration_mins` | float | Film duration in minutes |
+| `duration_secs` | float | Film duration in seconds |
 | `description` | string | Original description of the modification |
+| `cleaned_description` | string | Cleaned version of the description |
 | `cut_no` | integer | Sequential number for each modification within a film |
-| `deleted_secs_` | float | Duration of content removed in minutes |
-| `replaced_secs_` | float | Duration of content replaced in minutes |
-| `inserted_secs_` | float | Duration of content added in minutes |
+| `deleted_secs` | float | Duration of content removed in seconds |
+| `replaced_secs` | float | Duration of content replaced in seconds |
+| `inserted_secs` | float | Duration of content added in seconds |
 | `total_modified_time_secs` | float | Total duration affected by modifications |
-| `cert_date` | date | Date of certification (maybe be incomplete). Does not reflect date of release. |
+| `cert_date` | date | Date of certification (may be incomplete). Does not reflect date of release. |
 | `cert_no` | string | Certification number |
 | `applicant` | string | Person/entity applying for certification |
 | `certifier` | string | Official who approved the certification |
-| `ai_cleaned_description` | string | Processed version of the description |
-| `ai_action_types` | string | Categorized type of action (deletion, insertion, etc.) |
-| `ai_content_types` | string | Categorized content type (violence, language, etc.) |
-| `ai_media_elements` | string | Type of media element modified (dialogue, scene, etc.) |
-| `ai_reason` | string | Reason for modification |
-| `censored_item_index` | integer | Index of censored item |
-| `censored_content` | string | Description of specific content censored |
-| `censored_reference` | string | Reference to the censored content |
-| `censored_action` | string | Action taken on the content |
-| `censored_content_types` | string | Types of content being censored |
-| `censored_media_element` | string | Specific media element being censored |
-| `censored_replacement` | string | What was used to replace censored content (if applicable) |
 | `rating` | string | Film rating/certification category |
 | `cbfc_file_no` | string | CBFC file number |
+| `imdb_id` | string | IMDb identifier for the film search match |
+| `imdb_title` | string | Film title according to IMDb search match |
+| `imdb_year` | integer | Year of release according to IMDb search match |
+| `imdb_genres` | string | Genres listed on IMDb search match |
+| `imdb_rating` | float | IMDb search match rating |
+| `imdb_votes` | integer | Number of votes on IMDb search match |
+| `imdb_directors` | string | Film directors according to IMDb search match |
+| `imdb_actors` | string | Main actors according to IMDb search match |
+| `imdb_runtime` | integer | Runtime in minutes according to IMDb search match |
+| `imdb_countries` | string | Countries of production according to IMDb search match |
+| `imdb_languages` | string | Languages according to IMDb search match |
+| `imdb_overview` | string | Film synopsis from IMDb search match |
+| `imdb_release_date` | date | Release date according to IMDb search match |
+| `imdb_writers` | string | Writers/screenwriters according to IMDb search match |
+| `imdb_studios` | string | Production studios according to IMDb search match |
+| `imdb_poster_url` | string | URL to search match film poster on IMDb |
+| `ai_cleaned_description` | string | AI-processed version of the description |
+| `ai_reference` | string | Reference to the censored content |
+| `ai_action` | string | Action taken on the content |
+| `ai_content_types` | string | Types of content being censored |
+| `ai_media_element` | string | Specific media element being censored |
 
+Various columns are extracted using scripts available in the [scripts/](../scripts/README.md) folder, including:
+- Metadata and modifications: [`analysis/main.py`](../scripts/analysis/main.py)
+- `ai_`: [`llm/main.py`](../scripts/llm/main.py)
+- `imdb_`: [`imdb/main.py`](../scripts/imdb/main.py)
 
-We use an LLM to extract metadata (such as the `ai_` columns). The prompt and scripts are available in [the analysis folder](../scripts/analysis/README.md).
+## Raw Data
 
-## Subfolders
-
-### individual_files
-Individual components of the main dataset:
-- `metadata_modifications.csv`: Links metadata with specific modifications
-- `metadata_cleaned.csv`: Cleaned version of film metadata 
-- `modifications_cleaned.csv`: Cleaned version of modification details
-
-### site_data
-Data prepared for website:
-- `recent_movies.csv`: Dataset of recent films and their certification details. Used on the explorer site. 
-- `metadata_modifications.parquet`: Optimized metadata-modifications in Parquet format
-
-### raw
-Original unprocessed data:
 - `metadata.csv`: Raw film metadata
 - `modifications.csv`: Raw modifications data
+- `categories.csv`: Raw categories data
+- `imdb.csv`: Raw IMDb search match data
+- `llm.csv`: Raw LLM processed modifications data
+- `recent.csv`: Recent film certifications
 

@@ -58,6 +58,7 @@ def main():
     parser.add_argument('--skip-imdb', action='store_true', help='Skip running the IMDB script')
     parser.add_argument('--skip-llm', action='store_true', help='Skip running the LLM script')
     parser.add_argument('--skip-processing', action='store_true', help='Skip running the data processing script')
+    parser.add_argument('--skip-join', action='store_true', help='Skip joining the datasets')
     parser.add_argument('--force-processing', action='store_true', help='Force data processing even if input files have not changed')
     args = parser.parse_args()
     
@@ -150,6 +151,22 @@ def main():
             return False
     else:
         logger.info("Skipping LLM script as requested")
+    
+    # Step 6: Run join main.py
+    if not args.skip_join:
+        join_script = project_root / "scripts" / "join" / "main.py"
+        join_dir = join_script.parent
+        
+        if not join_script.exists():
+            logger.error(f"Join script not found at {join_script}")
+            return False
+            
+        logger.info("Running join script...")
+        if not run_script(join_script, cwd=join_dir):
+            logger.error("Join script failed. Pipeline stopped.")
+            return False
+    else:
+        logger.info("Skipping join script as requested")
     
     logger.info("Complete data pipeline finished successfully!")
     return True
