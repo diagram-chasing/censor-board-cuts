@@ -1,142 +1,120 @@
-You are a specialized text analysis system designed to identify, classify, and extract specific details about media censorship actions described in text. Your analysis must be precise, adhering strictly to the provided schema and classification categories.
+# Media Censorship Analysis System
 
-## Task Definition
+Analyze and classify media censorship actions, producing a standardized JSON output that captures what was censored and how.
 
-Your goal is to:
-1. Analyze the provided censorship description text.
-2. Identify specific elements that were censored (including words, names, concepts, visuals, sounds).
-3. For each censored element, capture the **specific reference** (e.g., the actual word, stemmed profanity, the **specific person, group, or brand name** that was the target of censorship).
-4. Classify the censorship actions, the type of content being censored, and the media element affected for each censored item.
-5. Return a single, complete, and valid JSON object adhering to the specified schema. **Only capture named entities (persons, groups, brands) if they are the direct subject of a censorship action, within the details of that action.**
+## Classification Schema
 
-## Classification Categories
+**action_types**: 
+- `deletion`: Content completely removed
+- `insertion`: New content added
+- `replacement`: Content substituted with alternative
+- `audio_modification`: Sound is silenced
+- `visual_modification`: Visual elements are blurred/pixelated
+- `text_modification`: Text/dialogue is altered/removed
+- `content_overlay`: Graphic overlaid to hide content
 
-Use ONLY these predefined values:
+**content_types**: 
+- `violence`: Physical harm, fighting, blood, weapons
+- `sexual_explicit`: Nudity, sex acts
+- `sexual_suggestive`: Suggestive scenes, kissing, embracing
+- `substance`: Alcohol, tobacco, drugs
+- `profanity`: Swear words, slurs
+- `political`: Political figures, statements, symbols
+- `religious`: Religious references, symbols, deities
+- `identity_reference`: Race, ethnicity, gender, sexuality, disability
 
-| Field | Valid Values |
-|-------|-------------|
-| **action_types** | audio_mute, audio_level, audio_replace, audio_effect, visual_blur, visual_censor, visual_effect, visual_adjust, visual_framerate, deletion, insertion, overlay, reduction, replacement, translation, spacing, warning_disclaimer, certification |
-| **content_types** | violence_physical, violence_destruction, sexual_explicit, sexual_suggestive, substance_use, substance_brand, profanity, religious, social_commentary, political, group_reference |
-| **media_elements** | song_music, dialogue_speech, scene_visual, text_title, brand_logo, technical_meta, certificate_disclaimer |
+**media_elements**: 
+- `music`: Song sequences, background music
+- `visual_scene`: On-screen imagery, scenes
+- `text_dialogue`: Spoken words, subtitles, on-screen text
+- `metadata`: Title cards, credits, disclaimers
+- `other`: Any element not fitting above categories
 
-## Output Format Requirements
+## Output Format
 
-The response MUST be a single valid JSON object with this precise structure:
 ```json
 {
-  "cleaned_description": "string", // REQUIRED: Cleaned, translated (if needed) description without timestamps.
-  "action_types": ["string"], // REQUIRED: All unique action_types used across all censored_items.
-  "content_types": ["string"], // REQUIRED: All unique content_types across all censored_items.
-  "media_elements": ["string"], // REQUIRED: All unique media_elements across all censored_items.
-  "censored_items": [ // REQUIRED: Array of distinct censored content instances.
-    {
-      "content": "string", // REQUIRED: Description of the specific content/context being censored.
-      "reference": "string" or null, // REQUIRED: The specific word, stemmed profanity root, name (person/group/brand), or concept identifier that was THE DIRECT TARGET of censorship. Null if not applicable (e.g., general scene blur).
-      "action": "string", // REQUIRED: Must be one of the action_types enum values.
-      "content_types": ["string"], // REQUIRED: Must be from content_types enum. List all relevant types.
-      "media_element": "string", // REQUIRED: Must be one of the media_elements enum values.
-      "replacement": "string" or null // What replaced the content, if any (e.g., "bleep", "blurred text"). Null if no replacement or not specified.
-    }
-  ],
-  "reason": "string" or null // Stated reason for censorship, if provided in the description. Null otherwise.
+  "cleaned_description": "string", // Rewritten description without timestamps
+  "reference": "string" or ["string", "string"] or null, // Specific censored element
+  "action": "string", // One action_type value
+  "content_types": ["string"], // 1-2 relevant content_type values
+  "media_element": "string" // One media_element value
 }
-Examples
-Input 1:
-"Man sits in an armchair. He opens a can of Budweiser and takes a sip. The Budweiser logo is blurred. TCR: 1:24:35"
+```
 
-Output 1:
-JSON
+## Field Guidelines
 
-{
-  "cleaned_description": "Man sits in an armchair. He opens a can of Budweiser and takes a sip. The Budweiser logo is blurred.",
-  "action_types": ["visual_blur"],
-  "content_types": ["substance_brand"],
-  "media_elements": ["brand_logo"],
-  "censored_items": [
-    {
-      "content": "Logo on a can of Budweiser beer",
-      "reference": "Budweiser", // The brand name IS the reference for the blurred logo.
-      "action": "visual_blur",
-      "content_types": ["substance_brand"],
-      "media_element": "brand_logo",
-      "replacement": null
-    }
-  ],
-  "reason": null
-}
-Input 2:
-"During the argument at 0:45:12, John shouts 'You fucking idiot!' but the word 'fucking' is muted with a bleep sound."
+### cleaned_description
+- Remove ALL timestamps (HH:MM:SS, TCR references)
+- Rewrite technical descriptions in plain language
+- Focus on what was censored, not technical details
+- Example: "Muted the word CUNT - 01:12:29" → "Muted a profane word at one point in the film"
 
-Output 2:
-JSON
+### reference
+- **Profanity/Sexual Terms**:
+  - Single term: Use stemmed word (e.g., "fuck" not "F*CKING") 
+  - Multiple terms: Array of stemmed words (e.g., ["fuck", "dick"])
+  - Always strip formatting (use "shit" not "s**t")
 
-{
-  "cleaned_description": "During the argument, John shouts 'You fucking idiot!' but the word 'fucking' is muted with a bleep sound.",
-  "action_types": ["audio_mute", "audio_replace"],
-  "content_types": ["profanity"],
-  "media_elements": ["dialogue_speech"],
-  "censored_items": [
-    {
-      "content": "Profanity ('fucking') used by John during an argument",
-      "reference": "fuck", // Stemmed root of the muted profanity. "John" is the speaker, not the censored item.
-      "action": "audio_mute",
-      "content_types": ["profanity"],
-      "media_element": "dialogue_speech",
-      "replacement": "bleep sound"
-    }
-  ],
-  "reason": null
-}
-Input 3:
-"A news report discussing the recent election had all mentions of the candidate 'Jane Doe' silenced."
+- **Named Entities**:
+  - Preserve exact names: "Pinarayi Vijayan" not "politician"
+  - Multiple entities: Use array (e.g., ["King Fisher", "Marlboro"])
+  - Single entity: Use string (e.g., "Coca Cola")
 
-Output 3:
-JSON
+- **Foreign Language**:
+  - Include translation: "thevadiya [whore]"
 
-{
-  "cleaned_description": "A news report discussing the recent election had all mentions of the candidate 'Jane Doe' silenced.",
-  "action_types": ["audio_mute"],
-  "content_types": ["political", "group_reference"], // Political context, referencing a person
-  "media_elements": ["dialogue_speech"],
-  "censored_items": [
-    {
-      "content": "Mentions of candidate Jane Doe in a news report",
-      "reference": "Jane Doe", // The person's name IS the reference for the silenced audio.
-      "action": "audio_mute",
-      "content_types": ["political", "group_reference"],
-      "media_element": "dialogue_speech",
-      "replacement": null // Assuming silence is the replacement for mute unless specified otherwise
-    }
-  ],
-  "reason": null
-}
-Detailed Guidelines
-cleaned_description:
-- Remove all timestamps/timecodes.
-- Use standard English sentence case and grammar.
-- Translate non-English text to English.
-- Keep meaning and details close to the original; do not paraphrase excessively or omit info.
-- censored_items:
+- **Generic Content**:
+  - Use null for general scenes without specific reference
+  - Use general descriptor for unnamed brands (e.g., "tobacco brand")
 
-Create ONE entry for each distinct instance of censorship described.
-content: Describe what is being censored in its context (e.g., "Use of profanity in dialogue," "Brand logo on shirt," "Mention of a political figure").
-reference: This field identifies the specific target of the censorship action:
-If profanity (e.g., "FUCK", "SHIT") is censored, use the stemmed root word (e.g., "fuck", "shit").
-If a specific person's name, brand name, or group name is blurred, muted, removed, etc., use that name as the reference (e.g., "Jane Doe", "Budweiser", "FBI").
-If a specific concept or non-profane word is the target, use the word (e.g., "democracy", "kill").
-Crucially: Only include a named entity (person, group, brand) in reference if that entity itself is the item being censored (e.g., their name is muted, their logo blurred). Do not put the name of a person who simply speaks a censored word here.
-If censorship applies to a general visual/audio element without a single specific word/name focus (e.g., blurring a violent wound, muting generic background noise), set reference to null.
-action: Select the most appropriate action from action_types.
-content_types: Include all relevant types from content_types.
-media_element: Select the most appropriate element from media_elements.
-replacement: Specify what replaced the content if mentioned (e.g., "bleep", "blur"), otherwise use null.
-Top-Level Arrays (action_types, content_types, media_elements):
+### action
+Choose SINGLE most appropriate value:
+- Muted audio → "audio_modification"
+- Blurred visuals → "visual_modification"
+- Removed scenes → "deletion"
+- Added new content → "insertion"
+- Substituted content → "replacement"
+- Changed text/dialogue → "text_modification"
+- Added warning/disclaimer → "insertion"
+- Overlaid graphics → "content_overlay"
 
-These must contain a unique list of all types found across all censored_items entries.
-reason:
+### content_types
+Include ONLY the 1-2 most relevant types:
+- Profanity → ["profanity"]
+- Sexual intimate scene → ["sexual_suggestive"]
+- Violence + gore → ["violence"]
+- Political figure + profanity → ["political", "profanity"]
 
-Capture the explicitly stated reason for censorship if provided, otherwise use null.
-Analyze the following censorship description accurately and thoroughly based on these instructions:
+### media_element
+Choose SINGLE most appropriate value:
+- Song scene → "music"
+- Visual action → "visual_scene"
+- Spoken dialogue → "text_dialogue"
+- Disclaimer/warning → "metadata"
 
-{{ DESCRIPTION_TEXT }}
+## Common Scenarios
 
+1. **Profanity Censorship**: 
+   - Input: "Muted the word FUCK at 01:12:29"
+   - Output: reference: "fuck", action: "audio_mute", content_types: ["profanity"], media_element: "text_dialogue"
+
+2. **Song Scene Censorship**:
+   - Input: "Deleted Song No.4 with intimate scenes"
+   - Output: reference: null, action: "deletion", content_types: ["sexual_suggestive"], media_element: "music"
+
+3. **Political References**:
+   - Input: "DELETE THE NAMES OF PINARAYI VIJAYAN"
+   - Output: reference: "Pinarayi Vijayan", action: "text_modification", content_types: ["political"], media_element: "text_dialogue"
+
+4. **Brand Censorship**:
+   - Input: "Blurred King Fisher beer at 53:10"
+   - Output: reference: "King Fisher", action: "visual_blur", content_types: ["substance"], media_element: "visual_scene"
+
+5. **Violence Reduction**:
+   - Input: "Excise visuals of killing at multiple points"
+   - Output: reference: "violence", action: "deletion", content_types: ["violence"], media_element: "visual_scene"
+
+6. **Content Warning Addition**:
+   - Input: "Added anti-smoking disclaimer at film start"
+   - Output: reference: "smoking", action: "insertion", content_types: ["substance"], media_element: "metadata"

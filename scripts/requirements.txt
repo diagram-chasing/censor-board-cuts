@@ -7,3 +7,5 @@ urllib3
 pathlib
 certifi
 pyOpenSSL
+google-generativeai
+tqdm

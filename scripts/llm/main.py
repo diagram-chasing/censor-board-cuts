@@ -1,126 +1,99 @@
 #!/usr/bin/env python3
 import os
-import csv
 import json
 import pandas as pd
 import time
 import argparse
 from dotenv import load_dotenv
 import google.generativeai as genai
-from google.ai.generativelanguage_v1beta.types import content
 from tqdm import tqdm
 import logging
 
+from google import genai
+from google.genai import types
+
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.ERROR,  # Set root logger to ERROR level
     format='%(asctime)s [%(levelname)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
-logger = logging.getLogger(__name__)
+# Set logger level for script to INFO level
+logger = logging.getLogger('__name__')
+logger.setLevel(logging.INFO)
 
 # Load environment variables
 load_dotenv()
 
-# Configure Gemini API
-genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+# Create the model with the updated schema from the prompt
+def setup_model():
+    client = genai.Client(
+        api_key=os.environ.get("GEMINI_API_KEY"),
+    )
 
-# Create the model with the same configuration as in tagging.py
-generation_config = {
-  "temperature": 0.2,
-  "top_p": 0.95,
-  "top_k": 40,
-  "max_output_tokens": 8192,
-  "response_schema": content.Schema(
-    type = content.Type.OBJECT,
-    description = "Schema for representing the analysis of media censorship actions described in text.",
-    required = ["cleaned_description", "action_types", "content_types", "media_elements", "censored_items", "reason"],
-    properties = {
-      "cleaned_description": content.Schema(
-        type = content.Type.STRING,
-        description = "The original description text, cleaned of timestamps, translated to English if necessary, and formatted for clarity, preserving all relevant details.",
-      ),
-      "action_types": content.Schema(
-        type = content.Type.ARRAY,
-        description = "A unique list of all censorship actions identified across all censored items.",
-        items = content.Schema(
-          type = content.Type.STRING,
-          enum = ["audio_mute", "audio_level", "audio_replace", "audio_effect", "visual_blur", "visual_censor", "visual_effect", "visual_adjust", "visual_framerate", "deletion", "insertion", "overlay", "reduction", "replacement", "translation", "spacing", "warning_disclaimer", "certification"],
-        ),
-      ),
-      "content_types": content.Schema(
-        type = content.Type.ARRAY,
-        description = "A unique list of all types of content identified as being censored across all censored items.",
-        items = content.Schema(
-          type = content.Type.STRING,
-          enum = ["violence_physical", "violence_destruction", "sexual_explicit", "sexual_suggestive", "substance_use", "substance_brand", "profanity", "religious", "social_commentary", "political", "group_reference"],
-        ),
-      ),
-      "media_elements": content.Schema(
-        type = content.Type.ARRAY,
-        description = "A unique list of all types of media elements affected by censorship across all censored items.",
-        items = content.Schema(
-          type = content.Type.STRING,
-          enum = ["song_music", "dialogue_speech", "scene_visual", "text_title", "brand_logo", "technical_meta", "certificate_disclaimer"],
-        ),
-      ),
-      "censored_items": content.Schema(
-        type = content.Type.ARRAY,
-        description = "An array detailing each distinct instance of censorship identified in the description.",
-        items = content.Schema(
-          type = content.Type.OBJECT,
-          required = ["content", "reference", "action", "content_types", "media_element", "replacement"],
-          properties = {
-            "content": content.Schema(
-              type = content.Type.STRING,
-              description = "A description of the specific content or context being censored.",
+    # Updated schema based on the new prompt
+    model = "gemini-2.0-flash-lite"
+    response_schema = types.Schema(
+        type='OBJECT',
+        required=["cleaned_description", "reference", "action", "content_types", "media_element"],
+        properties={
+            "cleaned_description": types.Schema(
+                type='STRING',
+                description="Rewritten description in clear, human-readable language without timestamps.",
             ),
-            "reference": content.Schema(
-              type = content.Type.STRING,
-              description = "The specific word, stemmed profanity root, name (person/group/brand), or concept identifier that was the DIRECT TARGET of censorship. Null if not applicable (e.g., general scene blur).",
-              nullable = True,
+            "reference": types.Schema(
+                type='OBJECT',
+                description="The specific word, entity, or concept censored. Can be a single string, array of strings, or null if no specific reference.",
+                properties={
+                    "value": types.Schema(
+                        type='STRING',
+                        description="The specific reference value or null if not applicable"
+                    ),
+                    "values": types.Schema(
+                        type='ARRAY',
+                        description="Multiple reference values if applicable",
+                        items=types.Schema(type='STRING')
+                    )
+                }
             ),
-            "action": content.Schema(
-              type = content.Type.STRING,
-              description = "The specific censorship action applied to this item.",
-              enum = ["audio_mute", "audio_level", "audio_replace", "audio_effect", "visual_blur", "visual_censor", "visual_effect", "visual_adjust", "visual_framerate", "deletion", "insertion", "overlay", "reduction", "replacement", "translation", "spacing", "warning_disclaimer", "certification"],
+            "action": types.Schema(
+                type='STRING',
+                description="The type of censorship action performed.",
+                enum=[
+                    "deletion", 
+                    "insertion", 
+                    "replacement", 
+                    "audio_modification", 
+                    "visual_modification", 
+                    "text_modification", 
+                    "content_overlay"
+                ],
             ),
-            "content_types": content.Schema(
-              type = content.Type.ARRAY,
-              description = "A list of all relevant content types for this specific censored item.",
-              items = content.Schema(
-                type = content.Type.STRING,
-                enum = ["violence_physical", "violence_destruction", "sexual_explicit", "sexual_suggestive", "substance_use", "substance_brand", "profanity", "religious", "social_commentary", "political", "group_reference"],
-              ),
+            "content_types": types.Schema(
+                type='ARRAY',
+                description="Types of content being censored (1-2 most relevant categories).",
+                items=types.Schema(
+                    type='STRING',
+                    enum=[
+                        "violence", 
+                        "sexual_explicit", 
+                        "sexual_suggestive", 
+                        "substance", 
+                        "profanity", 
+                        "political", 
+                        "religious", 
+                        "identity_reference"
+                    ],
+                ),
             ),
-            "media_element": content.Schema(
-              type = content.Type.STRING,
-              description = "The specific media element affected by this censorship action.",
-              enum = ["song_music", "dialogue_speech", "scene_visual", "text_title", "brand_logo", "technical_meta", "certificate_disclaimer"],
+            "media_element": types.Schema(
+                type='STRING',
+                description="The media element affected by the censorship action.",
+                enum=["music", "visual_scene", "text_dialogue", "metadata", "other"],
             ),
-            "replacement": content.Schema(
-              type = content.Type.STRING,
-              description = "Description of what replaced the censored content, if applicable (e.g., 'bleep sound', 'blurred area', 'silence'). Null if no replacement occurred or none was specified.",
-              nullable = True,
-            ),
-          },
-        ),
-      ),
-      "reason": content.Schema(
-        type = content.Type.STRING,
-        description = "The explicitly stated reason for the censorship, if provided in the description text. Null if no reason is mentioned.",
-        nullable = True,
-      ),
-    },
-  ),
-  "response_mime_type": "application/json",
-}
-
-model = genai.GenerativeModel(
-  model_name="gemini-1.5-flash-8b",
-  generation_config=generation_config,
-  system_instruction="You are a specialized text analysis system designed to identify, classify, and extract specific details about media censorship actions described in text. Your analysis must be precise, adhering strictly to the provided schema and classification categories.\n\n## Task Definition\n\nYour goal is to:\n1. Analyze the provided censorship description text.\n2. Identify specific elements that were censored (including words, names, concepts, visuals, sounds).\n3. For each censored element, capture the **specific reference** (e.g., the actual word, stemmed profanity, the **specific person, group, or brand name** that was the target of censorship).\n4. Classify the censorship actions, the type of content being censored, and the media element affected for each censored item.\n5. Return a single, complete, and valid JSON object adhering to the specified schema. **Only capture named entities (persons, groups, brands) if they are the direct subject of a censorship action, within the details of that action.**\n\n## Classification Categories\n\nUse ONLY these predefined values:\n\n| Field | Valid Values |\n|-------|-------------|\n| **action_types** | audio_mute, audio_level, audio_replace, audio_effect, visual_blur, visual_censor, visual_effect, visual_adjust, visual_framerate, deletion, insertion, overlay, reduction, replacement, translation, spacing, warning_disclaimer, certification |\n| **content_types** | violence_physical, violence_destruction, sexual_explicit, sexual_suggestive, substance_use, substance_brand, profanity, religious, social_commentary, political, group_reference |\n| **media_elements** | song_music, dialogue_speech, scene_visual, text_title, brand_logo, technical_meta, certificate_disclaimer |\n\n## Output Format Requirements\n\nThe response MUST be a single valid JSON object with this precise structure:\n```json\n{\n  \"cleaned_description\": \"string\", // REQUIRED: Cleaned, translated (if needed) description without timestamps.\n  \"action_types\": [\"string\"], // REQUIRED: All unique action_types used across all censored_items.\n  \"content_types\": [\"string\"], // REQUIRED: All unique content_types across all censored_items.\n  \"media_elements\": [\"string\"], // REQUIRED: All unique media_elements across all censored_items.\n  \"censored_items\": [ // REQUIRED: Array of distinct censored content instances.\n    {\n      \"content\": \"string\", // REQUIRED: Description of the specific content/context being censored.\n      \"reference\": \"string\" or null, // REQUIRED: The specific word, stemmed profanity root, name (person/group/brand), or concept identifier that was THE DIRECT TARGET of censorship. Null if not applicable (e.g., general scene blur).\n      \"action\": \"string\", // REQUIRED: Must be one of the action_types enum values.\n      \"content_types\": [\"string\"], // REQUIRED: Must be from content_types enum. List all relevant types.\n      \"media_element\": \"string\", // REQUIRED: Must be one of the media_elements enum values.\n      \"replacement\": \"string\" or null // What replaced the content, if any (e.g., \"bleep\", \"blurred text\"). Null if no replacement or not specified.\n    }\n  ],\n  \"reason\": \"string\" or null // Stated reason for censorship, if provided in the description. Null otherwise.\n}\n",
-)
+        },
+    )
+    return client, model, response_schema
 
 def process_description(description, timeout=30):
     """Process a description using the Gemini model and return the JSON response."""
@@ -128,93 +101,71 @@ def process_description(description, timeout=30):
         return None
     
     try:
-        # Create a simple mock response for testing
-        # This allows you to test the script without making API calls
-        if os.environ.get("USE_MOCK_RESPONSE", "false").lower() == "true":
-            logger.info("Using mock response for testing")
-            return create_mock_response(description)
+        # Set up the model and client
+        client, model, response_schema = setup_model()
         
         # Set a timeout for the API call
         start_time = time.time()
-        chat_session = model.start_chat(history=[])
+        
+        # Setup the generation config
+        generate_content_config = types.GenerateContentConfig(
+            temperature=0.6,
+            response_mime_type="application/json",
+            response_schema=response_schema,
+            system_instruction=types.Part.from_text(text=get_system_instruction())
+        )
+        
+        # Create the content
+        contents = [
+            genai.types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_text(text=description),
+                ],
+            ),
+        ]
         
         # Use a timeout to prevent hanging
         response = None
         try:
-            response = chat_session.send_message(description)
+            # Check for timeout before and during the API call
+            while True:
+                if time.time() - start_time > timeout:
+                    raise TimeoutError(f"API call exceeded timeout of {timeout}s")
+                
+                # Use a non-blocking call if possible, or check time regularly
+                response = client.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=generate_content_config,
+                )
+                
+                # If we reach here, the call succeeded
+                break
+                
             elapsed_time = time.time() - start_time
             logger.debug(f"API call completed in {elapsed_time:.2f}s")
-        except Exception as e:
-            logger.error(f"API call failed: {e}")
+            
+            if hasattr(response, 'text') and response.text:
+                return json.loads(response.text)
+            elif hasattr(response, 'parts') and response.parts:
+                return json.loads(response.parts[0].text)
+            else:
+                logger.warning("Empty response from API")
+                return None
+        except TimeoutError as te:
+            logger.error(f"API call timed out after {timeout}s: {te}")
             return None
-        
-        if response and response.text:
-            return json.loads(response.text)
-        else:
-            logger.warning("Empty response from API")
+        except Exception as e:
+            # Check if we exceeded timeout during exception handling
+            if time.time() - start_time > timeout:
+                logger.error(f"API call timed out after {timeout}s during error handling")
+                return None
+            logger.error(f"API call failed: {e}")
             return None
     except Exception as e:
         logger.error(f"Error processing description: {e}")
         return None
-
-def create_mock_response(description):
-    """Create a mock response for testing purposes."""
-    # Simple mock response based on the description
-    if "blur" in description.lower():
-        return {
-            "cleaned_description": description,
-            "action_types": ["visual_blur"],
-            "content_types": ["substance_brand"],
-            "media_elements": ["brand_logo"],
-            "censored_items": [
-                {
-                    "content": "Liquor label and brand names",
-                    "reference": None,
-                    "action": "visual_blur",
-                    "content_types": ["substance_brand"],
-                    "media_element": "brand_logo",
-                    "replacement": None
-                }
-            ],
-            "reason": None
-        }
-    elif "mute" in description.lower() or "bleep" in description.lower():
-        return {
-            "cleaned_description": description,
-            "action_types": ["audio_mute", "audio_replace"],
-            "content_types": ["profanity"],
-            "media_elements": ["dialogue_speech"],
-            "censored_items": [
-                {
-                    "content": "Profanity in dialogue",
-                    "reference": "profanity",
-                    "action": "audio_mute",
-                    "content_types": ["profanity"],
-                    "media_element": "dialogue_speech",
-                    "replacement": "bleep sound"
-                }
-            ],
-            "reason": None
-        }
-    else:
-        # Generic response
-        return {
-            "cleaned_description": description,
-            "action_types": ["deletion"],
-            "content_types": ["profanity"],
-            "media_elements": ["dialogue_speech"],
-            "censored_items": [
-                {
-                    "content": "Content in description",
-                    "reference": None,
-                    "action": "deletion",
-                    "content_types": ["profanity"],
-                    "media_element": "dialogue_speech",
-                    "replacement": None
-                }
-            ],
-            "reason": None
-        }
 
 def flatten_json_for_csv(json_data, original_row):
     """Convert the JSON response into a format suitable for CSV output."""
@@ -224,66 +175,83 @@ def flatten_json_for_csv(json_data, original_row):
     # Start with the original row data
     flattened = original_row.copy()
     
-    # Add the top-level fields
+    # Extract data from the updated schema
     flattened['ai_cleaned_description'] = json_data.get('cleaned_description', '')
-    flattened['ai_action_types'] = ';'.join(json_data.get('action_types', []))
-    flattened['ai_content_types'] = ';'.join(json_data.get('content_types', []))
-    flattened['ai_media_elements'] = ';'.join(json_data.get('media_elements', []))
-    flattened['ai_reason'] = json_data.get('reason', '')
+    flattened['ai_action'] = json_data.get('action', '')
     
-    # Handle censored items - we'll create one row per censored item
-    censored_items = json_data.get('censored_items', [])
-    if not censored_items:
-        return [flattened]
+    # Handle reference field with the new schema structure
+    reference = json_data.get('reference', {})
+    if reference:
+        # Check for values array first
+        values = reference.get('values', [])
+        if values:
+            flattened['ai_reference'] = '|'.join([str(r) for r in values if r is not None])
+        else:
+            # Check for single value
+            value = reference.get('value', '')
+            flattened['ai_reference'] = str(value) if value else ''
+    else:
+        flattened['ai_reference'] = ''
     
-    result_rows = []
-    for i, item in enumerate(censored_items):
-        item_row = flattened.copy()
-        item_row['censored_item_index'] = i + 1
-        item_row['censored_content'] = item.get('content', '')
-        item_row['censored_reference'] = item.get('reference', '')
-        item_row['censored_action'] = item.get('action', '')
-        item_row['censored_content_types'] = ';'.join(item.get('content_types', []))
-        item_row['censored_media_element'] = item.get('media_element', '')
-        item_row['censored_replacement'] = item.get('replacement', '')
-        result_rows.append(item_row)
+    # Handle content_types array
+    content_types = json_data.get('content_types', [])
+    flattened['ai_content_types'] = '|'.join(content_types) if content_types else ''
     
-    return result_rows
+    # Media element
+    flattened['ai_media_element'] = json_data.get('media_element', '')
+    
+    return [flattened]
 
-def get_processed_ids(processed_log_file):
-    """Read the processed IDs log file and return a set of processed (certificate_id, cut_no) tuples"""
-    processed_ids = set()
+def get_system_instruction():
+    """Load the system instruction from prompt.txt in the same folder as the script."""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    prompt_file = os.path.join(current_dir, "prompt.txt")
     
-    if os.path.exists(processed_log_file):
+    try:
+        if os.path.exists(prompt_file):
+            with open(prompt_file, 'r', encoding='utf-8') as f:
+                return f.read()
+        else:
+            logger.error(f"Prompt file not found at {prompt_file}")
+            raise FileNotFoundError(f"Required prompt file not found: {prompt_file}")
+    except Exception as e:
+        logger.error(f"Error reading prompt file: {e}")
+        raise
+
+def get_completed_ids(completed_file):
+    """Read the completed IDs file and return a set of processed (certificate_id, cut_no) tuples"""
+    completed_ids = set()
+    
+    if os.path.exists(completed_file):
         try:
-            with open(processed_log_file, 'r') as f:
+            with open(completed_file, 'r') as f:
                 for line in f:
                     line = line.strip()
                     if line:
                         parts = line.split(',')
                         if len(parts) >= 2:
                             certificate_id, cut_no = parts[0], parts[1]
-                            processed_ids.add((certificate_id, str(cut_no)))
+                            completed_ids.add((certificate_id, str(cut_no)))
                 
-            logger.info(f"Loaded {len(processed_ids)} processed IDs from log")
+            logger.info(f"Loaded {len(completed_ids)} IDs from completed file")
         except Exception as e:
-            logger.error(f"Error reading processed IDs log: {e}")
+            logger.error(f"Error reading completed IDs file: {e}")
     else:
-        logger.info("No processed IDs log found, starting fresh")
+        logger.info("No completed IDs file found, starting fresh")
     
-    return processed_ids
+    return completed_ids
 
-def update_processed_id_log(processed_log_file, cert_id, cut_no):
-    """Append a single processed ID to the log file immediately"""
+def append_completed_id(completed_file, cert_id, cut_no):
+    """Append a single processed ID to the completed file immediately"""
     try:
-        with open(processed_log_file, 'a') as f:
+        with open(completed_file, 'a') as f:
             f.write(f"{cert_id},{cut_no}\n")
             f.flush()  # Ensure it's written to disk
     except Exception as e:
-        logger.error(f"Error updating log for {cert_id},{cut_no}: {e}")
+        logger.error(f"Error updating completed file for {cert_id},{cut_no}: {e}")
 
-def extract_processed_ids_from_output(output_file):
-    """Extract all processed IDs from the output CSV file and update the log file"""
+def update_completed_file(output_file):
+    """Extract all processed IDs from the output CSV file and update the completed file"""
     if not os.path.exists(output_file) or os.path.getsize(output_file) == 0:
         logger.info(f"No output file found or file is empty")
         return set()
@@ -291,78 +259,51 @@ def extract_processed_ids_from_output(output_file):
     try:
         df = pd.read_csv(output_file)
         if 'certificate_id' in df.columns and 'cut_no' in df.columns:
-            processed_ids = set(zip(df['certificate_id'].astype(str), df['cut_no'].astype(str)))
-            logger.info(f"Extracted {len(processed_ids)} processed IDs from output file")
-            return processed_ids
+            completed_ids = set(zip(df['certificate_id'].astype(str), df['cut_no'].astype(str)))
+            logger.info(f"Extracted {len(completed_ids)} completed IDs from output file")
+            return completed_ids
         else:
             logger.warning(f"Output file lacks 'certificate_id' or 'cut_no' columns")
             return set()
     except Exception as e:
-        logger.error(f"Error extracting processed IDs from output file: {e}")
+        logger.error(f"Error extracting completed IDs from output file: {e}")
         return set()
 
-def process_csv(input_file, output_file, log_file=None, limit=None, use_mock=False, rebuild_log=False):
+def process_csv(input_file, output_file, completed_file=None, limit=None, rebuild_log=False):
     """Process the CSV file and output the results to a new CSV file,
     saving incrementally and resuming if interrupted."""
-    # Set environment variable for mock responses if needed
-    if use_mock:
-        os.environ["USE_MOCK_RESPONSE"] = "true"
-    else:
-        # Ensure mock response is disabled if not explicitly requested
-        if "USE_MOCK_RESPONSE" in os.environ:
-            del os.environ["USE_MOCK_RESPONSE"]
 
-    # Set default log file path if not provided
-    if log_file is None:
-        # Store log in the same directory as this script
+    # Set default completed file path if not provided
+    if completed_file is None:
+        # Store completed file in the same directory as this script
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(current_dir, "processed_ids.log")
+        completed_file = os.path.join(current_dir, ".completed.json")
     
-    # If rebuild_log flag is set, extract IDs from output file and rebuild log
+    # If rebuild_log flag is set, extract IDs from output file and rebuild completed file
     if rebuild_log and os.path.exists(output_file):
-        logger.info("Rebuilding processed IDs log from output file")
-        processed_ids = extract_processed_ids_from_output(output_file)
-        if processed_ids:
-            if os.path.exists(log_file):
-                # Backup the existing log file
-                backup_path = log_file + '.bak'
-                try:
-                    os.rename(log_file, backup_path)
-                    logger.info(f"Backed up existing log file")
-                except Exception as e:
-                    logger.error(f"Error backing up log file: {e}")
-            
-            # Create a new log file with extracted IDs
-            with open(log_file, 'w') as f:
-                for cert_id, cut_no in processed_ids:
+        logger.info("Rebuilding completed IDs file from output file")
+        completed_ids = update_completed_file(output_file)
+        if completed_ids:
+            # Create a new completed file with extracted IDs
+            with open(completed_file, 'w') as f:
+                for cert_id, cut_no in completed_ids:
                     f.write(f"{cert_id},{cut_no}\n")
             
-            logger.info(f"Rebuilt log file with {len(processed_ids)} IDs")
+            logger.info(f"Rebuilt completed file with {len(completed_ids)} IDs")
     else:
-        # Get already processed IDs from log file
-        processed_ids = get_processed_ids(log_file)
+        # Get already completed IDs from completed file
+        completed_ids = get_completed_ids(completed_file)
 
-    # Define columns
-    # Instead of hardcoding original columns, we'll determine them from the input data
+    # Define columns for the new updated schema
     ai_columns = [
-        'ai_cleaned_description', 'ai_action_types', 'ai_content_types', 'ai_media_elements', 'ai_reason',
-        'censored_item_index', 'censored_content', 'censored_reference', 'censored_action',
-        'censored_content_types', 'censored_media_element', 'censored_replacement'
+        'certificate_id', 'cut_no', 'ai_cleaned_description', 'ai_reference', 'ai_action', 'ai_content_types', 'ai_media_element'
     ]
     
     # Read the input CSV file
     try:
         df = pd.read_csv(input_file)
         logger.info(f"Loaded input CSV with {len(df)} rows")
-        
-        # Determine original columns from the input data
-        # Exclude AI columns that might already exist in the input
-        original_columns = [col for col in df.columns if not col.startswith('ai_') and col not in ai_columns]
-        logger.info(f"Detected {len(original_columns)} original columns from input data")
-        
-        # Define columns to keep (original + AI)
-        columns_to_keep = original_columns + ai_columns
-        logger.info(f"Will preserve {len(original_columns)} original columns and add {len(ai_columns)} AI columns")
+        logger.info(f"Will add {len(ai_columns)} AI columns")
         
     except Exception as e:
         logger.error(f"Error loading input CSV file: {e}")
@@ -377,12 +318,12 @@ def process_csv(input_file, output_file, log_file=None, limit=None, use_mock=Fal
         df['certificate_id'] = df['certificate_id'].astype(str)
         df['cut_no'] = df['cut_no'].astype(str)
         
-        df_to_process = df[~df.apply(lambda row: (row['certificate_id'], row['cut_no']) in processed_ids, axis=1)]
-        processed_count = original_row_count - len(df_to_process)
-        if processed_count > 0:
-            logger.info(f"Skipping {processed_count} already processed rows")
+        df_to_process = df[~df.apply(lambda row: (row['certificate_id'], row['cut_no']) in completed_ids, axis=1)]
+        completed_count = original_row_count - len(df_to_process)
+        if completed_count > 0:
+            logger.info(f"Skipping {completed_count} already completed rows")
         else:
-            logger.info("No rows to skip based on log file")
+            logger.info("No rows to skip based on completed file")
     else:
         logger.warning("Input file lacks ID columns. Processing all rows")
         df_to_process = df
@@ -415,70 +356,73 @@ def process_csv(input_file, output_file, log_file=None, limit=None, use_mock=Fal
         # Process the description
         json_result = process_description(description)
 
-        # Flatten the JSON result
-        flattened_rows = flatten_json_for_csv(json_result, row.to_dict())
-
-        if not flattened_rows:
-            # Handle case where no censored items found or error occurred
-            # Create a row with original data + empty AI fields
-            row_dict = row.to_dict()
+        # Only proceed with saving the ID if we got a successful result
+        if json_result:
+            # Flatten the JSON result
+            flattened_rows = flatten_json_for_csv(json_result, row.to_dict())
             
-            # Add AI fields with empty values
-            for ai_col in ai_columns:
-                if ai_col == 'ai_cleaned_description' and json_result:
-                    row_dict[ai_col] = json_result.get('cleaned_description', '')
-                elif ai_col == 'ai_reason' and json_result:
-                    row_dict[ai_col] = json_result.get('reason', '')
-                elif ai_col == 'censored_item_index':
-                    row_dict[ai_col] = pd.NA
-                else:
-                    row_dict[ai_col] = ''
-            
-            flattened_rows = [row_dict] # Create a list containing this single row dict
-
-        # Convert batch to DataFrame
-        batch_df = pd.DataFrame(flattened_rows)
-
-        # Ensure all necessary columns exist, fill missing with NA/empty string appropriately
-        for col in columns_to_keep:
-            if col not in batch_df.columns:
-                # Basic type guessing for default values
-                if col in ['censored_item_index', 'deleted_mins', 'replaced_mins', 'inserted_mins', 'total_modified_time_mins', 'duration_mins']:
-                    batch_df[col] = pd.NA
-                elif col.startswith('ai_') or col.startswith('censored_'):
-                    # AI-generated columns should be empty strings if missing
-                    batch_df[col] = ''
-                else:
-                    # For original columns that are missing, try to get from the original row
-                    if col in row.to_dict():
-                        batch_df[col] = row[col]
-                    else:
-                        # If still not found, use empty string as default
-                        batch_df[col] = ''
-                        logger.debug(f"Column '{col}' not found in original data or processed result")
-
-        # Reorder/select columns
-        batch_df = batch_df[columns_to_keep]
-
-        # Append the batch to the CSV file
-        try:
-            batch_df.to_csv(output_file, mode='a', header=write_header, index=False, lineterminator='\n')
-            write_header = False # Header is written only once
-            
-            # Track this ID as processed and update log file immediately
-            cert_id = str(row.get('certificate_id', ''))
-            cut_no = str(row.get('cut_no', ''))
-            if cert_id and cut_no:  # Only add valid IDs
-                newly_processed_ids.add((cert_id, cut_no))
-                # Update log file immediately after processing
-                update_processed_id_log(log_file, cert_id, cut_no)
+            if not flattened_rows:
+                # Handle case where no censored items found or error occurred
+                # Create a row with original data + empty AI fields
+                row_dict = row.to_dict()
                 
-        except Exception as e:
-            # Log error with identifying info if possible
+                # Add fields with empty values
+                for col in ai_columns:
+                    if col == 'ai_cleaned_description' and json_result:
+                        row_dict[col] = json_result.get('cleaned_description', '')
+                    else:
+                        row_dict[col] = ''
+                
+                flattened_rows = [row_dict] # Create a list containing this single row dict
+
+            # Convert batch to DataFrame
+            batch_df = pd.DataFrame(flattened_rows)
+    
+            # Ensure all necessary columns exist, fill missing with NA/empty string appropriately
+            for col in ai_columns:
+                if col not in batch_df.columns:
+                    # Basic type guessing for default values
+                    if col in ['censored_item_index', 'deleted_mins', 'replaced_mins', 'inserted_mins', 'total_modified_time_mins', 'duration_mins']:
+                        batch_df[col] = pd.NA
+                    elif col.startswith('ai_') or col.startswith('censored_'):
+                        # AI-generated columns should be empty strings if missing
+                        batch_df[col] = ''
+                    else:
+                        # For original columns that are missing, try to get from the original row
+                        if col in row.to_dict():
+                            batch_df[col] = row[col]
+                        else:
+                            # If still not found, use empty string as default
+                            batch_df[col] = ''
+                            logger.debug(f"Column '{col}' not found in original data or processed result")
+    
+            # Reorder/select columns
+            batch_df = batch_df[ai_columns]
+    
+            # Append the batch to the CSV file
+            try:
+                batch_df.to_csv(output_file, mode='a', header=write_header, index=False, lineterminator='\n')
+                write_header = False # Header is written only once
+                
+                # Track this ID as processed and update completed file immediately
+                cert_id = str(row.get('certificate_id', ''))
+                cut_no = str(row.get('cut_no', ''))
+                if cert_id and cut_no:  # Only add valid IDs
+                    newly_processed_ids.add((cert_id, cut_no))
+                    # Update completed file immediately after processing
+                    append_completed_id(completed_file, cert_id, cut_no)
+                    
+            except Exception as e:
+                # Log error with identifying info if possible
+                cert_id = row.get('certificate_id', 'UNKNOWN_ID')
+                cut_num = row.get('cut_no', 'UNKNOWN_CUT')
+                logger.error(f"Error writing batch for ID: {cert_id}, Cut: {cut_num}: {e}")
+                # Continue with next row
+        else:
+            # Log that the processing failed for this row
             cert_id = row.get('certificate_id', 'UNKNOWN_ID')
             cut_num = row.get('cut_no', 'UNKNOWN_CUT')
-            logger.error(f"Error writing batch for ID: {cert_id}, Cut: {cut_num}: {e}")
-            # Continue with next row
+            logger.warning(f"Processing failed for ID: {cert_id}, Cut: {cut_num} - not saving to completed file")
 
     # We still keep a final log update in case we missed any for some reason
     if newly_processed_ids:
@@ -491,10 +435,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Process descriptions using AI and update CSV file')
     parser.add_argument('--input', default=None, help='Path to input CSV file')
     parser.add_argument('--output', default=None, help='Path to output CSV file')
-    parser.add_argument('--log', default=None, help='Path to processed IDs log file')
+    parser.add_argument('--log', default=None, help='Path to processed IDs completed file')
     parser.add_argument('--limit', type=int, default=None, help='Limit the number of descriptions to process')
-    parser.add_argument('--mock', action='store_true', help='Use mock responses for testing')
-    parser.add_argument('--rebuild-log', action='store_true', help='Rebuild the processed IDs log from output file')
+    parser.add_argument('--rebuild-log', action='store_true', help='Rebuild the processed IDs completed file from output file')
     
     args = parser.parse_args()
     
@@ -502,9 +445,9 @@ if __name__ == "__main__":
     current_dir = os.path.dirname(os.path.abspath(__file__))
     
     # Define default paths relative to the current directory if not provided
-    input_file = args.input or os.path.join(current_dir, "..", "..", "data", "metadata_modifications.csv")
-    output_file = args.output or os.path.join(current_dir, "..", "..", "data", "data.csv")
-    log_file = args.log or os.path.join(current_dir, "processed_ids.log")  # Store log in analysis folder
+    input_file = args.input or os.path.join(current_dir, "..", "..", "data", "individual_files", "metadata_modifications.csv")
+    output_file = args.output or os.path.join(current_dir, "..", "..", "data", "raw", "llm.csv")
+    completed_file = args.log or os.path.join(current_dir, ".completed.json")  # Store completed file in analysis folder
     
     # Check if the input file exists
     if not os.path.exists(input_file):
@@ -516,8 +459,7 @@ if __name__ == "__main__":
     process_csv(
         input_file=input_file, 
         output_file=output_file, 
-        log_file=log_file, 
+        completed_file=completed_file, 
         limit=args.limit, 
-        use_mock=args.mock, 
         rebuild_log=args.rebuild_log
-    ) 
+    )

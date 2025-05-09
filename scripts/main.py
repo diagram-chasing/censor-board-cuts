@@ -56,6 +56,7 @@ def main():
     parser.add_argument('--skip-categories', action='store_true', help='Skip running the categories script')
     parser.add_argument('--skip-certificates', action='store_true', help='Skip running the certificates script')
     parser.add_argument('--skip-imdb', action='store_true', help='Skip running the IMDB script')
+    parser.add_argument('--skip-llm', action='store_true', help='Skip running the LLM script')
     parser.add_argument('--skip-processing', action='store_true', help='Skip running the data processing script')
     parser.add_argument('--force-processing', action='store_true', help='Force data processing even if input files have not changed')
     args = parser.parse_args()
@@ -133,6 +134,22 @@ def main():
             return False
     else:
         logger.info("Skipping IMDB script as requested")
+
+    # Step 5: Run LLM main.py
+    if not args.skip_llm:
+        llm_script = project_root / "scripts" / "llm" / "main.py"
+        llm_dir = llm_script.parent
+        
+        if not llm_script.exists():
+            logger.error(f"LLM script not found at {llm_script}")
+            return False
+            
+        logger.info("Running LLM script...")
+        if not run_script(llm_script, cwd=llm_dir):
+            logger.error("LLM script failed. Pipeline stopped.")
+            return False
+    else:
+        logger.info("Skipping LLM script as requested")
     
     logger.info("Complete data pipeline finished successfully!")
     return True
