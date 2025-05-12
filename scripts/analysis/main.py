@@ -5,10 +5,11 @@ import re
 import time
 import hashlib
 import json
-from datetime import datetime
 import logging
 import warnings
 import argparse
+
+from utils import cleanup_language, cleanup_movie_name
 
 # Suppress specific warnings
 warnings.filterwarnings('ignore', category=FutureWarning, module='pandas.core.strings.object_array')
@@ -499,8 +500,7 @@ def main():
     if not args.force:
         should_skip, current_hashes = should_skip_processing()
         if should_skip:
-            logger.info("Input files haven't changed since last run. Skipping processing.")
-            logger.info("Use --force to process anyway.")
+            logger.info("No changes found in input files. Skipping processing.")
             return
     else:
         # Still calculate hashes if forcing
@@ -587,12 +587,7 @@ def main():
                 if pd.notna(row['normalized_cert_no']):
                     # Map language if available (remove subtitles language)
                     if pd.notna(row['Movie Language']):
-                        language = row['Movie Language'].title()
-                        language = language.split('with')[0].strip()
-                        language = language.split('With')[0].strip()
-                        language = language.split('(')[0].strip()
-                        language = language.lstrip(' ').rstrip(' ')
-                        language = language.replace('Partly', 'partly')
+                        language = cleanup_language(row['Movie Language'])
                         language_map[row['normalized_cert_no']] = language
 
                     # Map rating if available
@@ -601,53 +596,7 @@ def main():
                     
                     # Map movie name if available
                     if pd.notna(row['Movie Name']):
-                        movie_name = row['Movie Name']
-                        movie_name = movie_name.replace(' (DUBBED FRESH)', '')
-                        movie_name = movie_name.replace(' (FRESH DUBBED)', '')
-                        movie_name = movie_name.replace(' (FRESH DUB)', '')
-                        movie_name = movie_name.replace(' (DUBBED)', '')
-
-                        movie_name = movie_name.replace(' - DUBBED FRESH', '')
-                        movie_name = movie_name.replace(' - FRESH DUBBED', '')
-                        movie_name = movie_name.replace(' - FRESH DUB', '')
-                        movie_name = movie_name.replace(' - DUBBED', '')
-
-                        movie_name = movie_name.replace('(DUBBED)', '')
-                        movie_name = movie_name.replace(' (DUBDDED)', '')
-                        movie_name = movie_name.replace('    ( DUBBED)', '')
-                        movie_name = movie_name.replace(' (FRESS DUBBED)', '')
-                        movie_name = movie_name.replace(' FRESH DUBBED', '')
-                        movie_name = movie_name.replace('  (DUBBING)  (REVISED)', '')
-                        movie_name = movie_name.replace(' ( DUBBED)(REVISED)', '')
-                        movie_name = movie_name.replace(' ( DUBBED)', '')
-                        movie_name = movie_name.replace(' (FRESH) (DUB)', '')
-                        movie_name = movie_name.replace(' (FRESH) (DUBB)', '')
-                        movie_name = movie_name.replace(' (DUB)', '')
-                        movie_name = movie_name.replace(' (DUBB)', '')
-                        movie_name = movie_name.replace('(DUB)', '')
-                        movie_name = movie_name.replace(' (DUBBED )', '')
-                        movie_name = movie_name.replace(' (Dubbed)', '')
-                        movie_name = movie_name.replace(' _ DUBBED', '')
-                        movie_name = movie_name.replace(' ( DUBBED )', '')
-                        movie_name = movie_name.replace('( FRESH DUB)', '')
-
-                        movie_name = movie_name.replace(' (HINDI DUBBED)', '')
-                        movie_name = movie_name.replace(' (HINDI DUB)', '')
-                        movie_name = movie_name.replace('ENGLISH DUBBED', '')
-                        movie_name = movie_name.replace(' (TELUGU DUBBED)', '')
-                        movie_name = movie_name.replace(' KANNADA DUBBED VERSION', '')
-                        movie_name = movie_name.replace(' - MALAYALAM DUBBED FROM TAMIL', '')
-                        movie_name = movie_name.replace(' (MALAYALAM DUBBED VERSION-MASTERPIECE)', '')
-                        movie_name = movie_name.replace(' (MALAYALAM DUBBED MOVIE PATTOM POLE)', '')
-                        movie_name = movie_name.replace('( DUBBED FROM VIVEGAM TAMIL FILM )', '')
-                        movie_name = movie_name.replace(' DUBBED FROM TAMIL[KALATHUR GRAMAM]', '')
-                        movie_name = movie_name.replace(' DUBBED FROM TAMIL VARALARU', '')
-                        movie_name = movie_name.replace('- TELUGU FILM DUBBED FROM TAMIL TITLE "ORU NAAL KOOTHU"', '')
-                        movie_name = movie_name.replace(' - MALAYALAM DUBBED', '')
-
-                        if "(DUBBED" in movie_name:
-                            movie_name = movie_name.split('(DUBBED')[0].rstrip()
-
+                        movie_name = cleanup_movie_name(row['Movie Name']) 
                         movie_name_map[row['normalized_cert_no']] = movie_name
                     
                     # Map cbfc_file_no if available

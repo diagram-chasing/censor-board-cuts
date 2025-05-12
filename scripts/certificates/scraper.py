@@ -90,7 +90,7 @@ class CBFCScraper:
                 html_content = f.read()
                 
             if self.is_html_valid(html_content):
-                logger.info(f"Using existing valid HTML for certificate ID: {certificate_id}")
+                logger.debug(f"Using existing valid HTML for certificate ID: {certificate_id}")
                 return True, html_content
             else:
                 logger.warning(f"Existing HTML for certificate ID {certificate_id} is invalid")
@@ -130,7 +130,7 @@ class CBFCScraper:
                 html_file = html_dir / f"{certificate_id}.html"
                 with open(html_file, 'w', encoding='utf-8') as f:
                     f.write(response.text)
-                logger.info(f"Saved raw HTML for certificate ID: {certificate_id}")
+                logger.debug(f"Saved raw HTML for certificate ID: {certificate_id}")
                 
                 data_parts = response.text.split('//OK')[1].strip()
             else:
@@ -140,7 +140,7 @@ class CBFCScraper:
             parsed_data = eval(data_parts)
 
             if parsed_data:
-                logger.info(f"Successfully scraped {certificate_id}")
+                logger.debug(f"Successfully scraped {certificate_id}")
                 return certificate_id
             else:
                 logger.warning(f"Incomplete data for certificate ID {certificate_id}")

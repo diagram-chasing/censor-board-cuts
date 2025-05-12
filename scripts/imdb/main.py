@@ -10,7 +10,8 @@ from tqdm import tqdm
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
         logging.FileHandler("imdb_fetch.log"),
         logging.StreamHandler()
@@ -52,7 +53,7 @@ def main():
     
     # Load completed IDs
     completed_ids = load_completed_ids()
-    logger.info(f"Loaded {len(completed_ids)} completed IDs from {COMPLETED_FILE}")
+    logger.debug(f"Loaded {len(completed_ids)} completed IDs from {COMPLETED_FILE}")
     
     # Initialize the Cinemagoer
     ia = Cinemagoer()
@@ -66,12 +67,13 @@ def main():
                 if 'movie_name' in row and row['movie_name']:
                     movie_name = row['movie_name']
                     movie_id = row.get('id', '')
-                    movie_data[movie_name] = movie_id
+                    if movie_id not in completed_ids:
+                        movie_data[movie_name] = movie_id
 
         # Get unique movie titles
         movie_titles = list(movie_data.keys())
         
-        logger.info(f"Read {len(movie_titles)} movie titles from {INPUT_FILE}")
+        logger.debug(f"Read {len(movie_titles)} movie titles from {INPUT_FILE}")
     except Exception as e:
         logger.error(f"Error reading input file: {e}")
         return
@@ -98,11 +100,16 @@ def main():
                         existing_movies.add(row['imdb_id'])
                     if 'original_id' in row and row['original_id']:
                         existing_original_ids.add(row['original_id'])
-            logger.info(f"Found {len(existing_movies)} existing movies and {len(existing_original_ids)} existing original IDs in {OUTPUT_FILE}")
+            logger.debug(f"Found {len(existing_movies)} existing movies and {len(existing_original_ids)} existing original IDs in {OUTPUT_FILE}")
         except Exception as e:
             logger.error(f"Error reading existing output file: {e}")
             existing_movies = set()
             existing_original_ids = set()
+
+    # If there are no new movies to fetch, exit
+    if not movie_titles:
+        logger.info("No new movies found in input files. Skipping fetch.")
+        return
     
     with open(OUTPUT_FILE, 'a', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fields, delimiter=';')
@@ -122,7 +129,7 @@ def main():
                 save_completed_ids(completed_ids)
 
                 if original_id and (original_id in existing_original_ids or original_id in completed_ids):
-                    logger.info(f"Skipping movie with existing original_id: {movie_title} (ID: {original_id})")
+                    logger.debug(f"Skipping movie with existing original_id: {movie_title} (ID: {original_id})")
                     continue
 
                 # Log the movie title

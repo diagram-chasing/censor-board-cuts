@@ -31,8 +31,8 @@ def run_script(script_path, args=None, cwd=None):
         if args:
             cmd.extend(args)
             
-        logger.info(f"Running {script_path} from {cwd or os.getcwd()}")
-        logger.info(f"Command: {' '.join(cmd)}")
+        logger.debug(f"Running {script_path} from {cwd or os.getcwd()}")
+        logger.debug(f"Command: {' '.join(cmd)}")
         
         # Run the script with specified working directory
         result = subprocess.run(
@@ -41,7 +41,7 @@ def run_script(script_path, args=None, cwd=None):
             cwd=cwd
         )
         
-        logger.info(f"Successfully completed {script_path}")
+        logger.debug(f"Successfully completed {script_path}")
         return True
     except subprocess.CalledProcessError as e:
         logger.error(f"Error running {script_path}: {e}")
@@ -52,7 +52,7 @@ def run_script(script_path, args=None, cwd=None):
 
 def main():
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Run the complete data pipeline')
+    parser = argparse.ArgumentParser(description='Run the data pipeline')
     parser.add_argument('--skip-categories', action='store_true', help='Skip running the categories script')
     parser.add_argument('--skip-certificates', action='store_true', help='Skip running the certificates script')
     parser.add_argument('--skip-imdb', action='store_true', help='Skip running the IMDB script')
@@ -65,8 +65,8 @@ def main():
     # Get the project root directory (parent of script directory)
     project_root = Path(__file__).parent.parent.absolute()
     
-    logger.info("Starting complete data pipeline")
-    logger.info(f"Project root: {project_root}")
+    logger.info("Running the data pipeline...")
+    logger.debug(f"Project root: {project_root}")
     
     # Step 1: Run categories main.py
     if not args.skip_categories:
@@ -168,7 +168,7 @@ def main():
     else:
         logger.info("Skipping join script as requested")
     
-    logger.info("Complete data pipeline finished successfully!")
+    logger.info("Data pipeline finished successfully!")
     return True
 
 if __name__ == "__main__":

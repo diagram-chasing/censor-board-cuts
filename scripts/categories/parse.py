@@ -1,8 +1,18 @@
 #!/usr/bin/env python3
 import os
 import csv
+import logging
 from bs4 import BeautifulSoup
-import re
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Output CSV file
 output_file = '../../data/raw/recent.csv'
@@ -15,13 +25,13 @@ for filename in sorted(os.listdir('raw/')):
     if not filename.endswith('.html'):
         continue
         
-    print(f"Processing {filename}...")
+    logger.debug(f"Processing {filename}...")
     
     try:
         # Skip small HTML files (they appear to be error pages)
         file_size = os.path.getsize(os.path.join('raw/', filename))
         if file_size < 1000:  # Skip files smaller than 1KB
-            print(f"Skipping {filename} (too small, likely an error page)")
+            logger.debug(f"Skipping {filename} (too small, likely an error page)")
             continue
             
         with open(os.path.join('raw/', filename), 'r', encoding='utf-8', errors='ignore') as file:
@@ -33,7 +43,7 @@ for filename in sorted(os.listdir('raw/')):
         # Find the table with films
         table = soup.find('table', id='example')
         if not table:
-            print(f"No film table found in {filename}")
+            logger.debug(f"No film table found in {filename}")
             continue
             
         # Process each row
@@ -56,7 +66,7 @@ for filename in sorted(os.listdir('raw/')):
                     unique_films.add((film_name, year, url))
                     
     except Exception as e:
-        print(f"Error processing {filename}: {e}")
+        logger.error(f"Error processing {filename}: {e}")
 
 # Write unique entries to CSV
 with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
@@ -67,4 +77,4 @@ with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
     for film_name, year, url in sorted(unique_films):
         writer.writerow([film_name, year, url])
 
-print(f"Extraction complete. {len(unique_films)} unique films saved to {output_file}")
+logger.debug(f"Extraction complete. {len(unique_films)} unique films saved to {output_file}")

@@ -72,7 +72,7 @@ def process_region_year(scraper: CBFCScraper, region: int, year: int, max_seq: i
     
     # Load already processed IDs
     completed_ids = load_completed_ids()
-    logger.info(f"Loaded {len(completed_ids)} already processed IDs")
+    logger.debug(f"Loaded {len(completed_ids)} already processed IDs")
     
     # Process in batches for efficiency
     batch_size = 10
@@ -98,7 +98,7 @@ def process_region_year(scraper: CBFCScraper, region: int, year: int, max_seq: i
                 
                 # Fetch certificate if it doesn't exist locally
                 if not html_path.exists():
-                    logger.info(f"Fetching certificate ID: {cert_id}")
+                    logger.debug(f"Fetching certificate ID: {cert_id}")
                     result = scraper.get_certificate_details(cert_id)
                     if result:
                         valid_ids.add(cert_id)
@@ -120,12 +120,12 @@ def process_region_year(scraper: CBFCScraper, region: int, year: int, max_seq: i
             if valid_ids:
                 # Reset consecutive failures if any valid certificate was found
                 consecutive_failures = 0
-                logger.info(f"Found {len(valid_ids)} valid certificates in batch of {len(current_batch)}")
+                logger.debug(f"Found {len(valid_ids)} valid certificates in batch of {len(current_batch)}")
             else:
                 # Increment consecutive failures by 1 since no valid certificates were found in this batch of 10 immediate consecutive certificates
                 if int(current_batch[-1]) - int(current_batch[0]) <= batch_size:
                     consecutive_failures += 1
-                    logger.info(f"No valid certificates found in batch ({current_batch[0]} to {current_batch[-1]})")
+                    logger.debug(f"No valid certificates found in batch ({current_batch[0]} to {current_batch[-1]})")
                     
                     # Check if we've hit the maximum failures
                     if consecutive_failures >= max_failures:
@@ -133,8 +133,8 @@ def process_region_year(scraper: CBFCScraper, region: int, year: int, max_seq: i
                         break
             
             # Log progress
-            logger.info(f"Region {region}, Year {year}, Processed through sequence {seq}/{max_seq}, Consecutive unsuccessful batches: {consecutive_failures}")
-            logger.info(f"Updated completed IDs list, now contains {len(completed_ids)} IDs")
+            logger.debug(f"Region {region}, Year {year}, Processed through sequence {seq}/{max_seq}, Consecutive unsuccessful batches: {consecutive_failures}")
+            logger.debug(f"Updated completed IDs list, now contains {len(completed_ids)} IDs")
             
             # Clear the batch
             current_batch = []
@@ -162,7 +162,7 @@ def main():
         return
 
     # First, get fresh tokens
-    logger.info("Getting fresh tokens...")
+    logger.debug("Getting fresh tokens...")
     if not get_tokens():
         logger.error("Failed to get tokens. Exiting.")
         sys.exit(1)
@@ -175,7 +175,7 @@ def main():
     # Check the arguments
     if args.all or (args.region is None and args.year is None):
         # Process all regions and years
-        logger.info(f"Processing all regions for years 2025-2024 (max_seq={args.max_seq}, max_failures={args.max_failures})")
+        logger.debug(f"Processing all regions for years 2025-2024 (max_seq={args.max_seq}, max_failures={args.max_failures})")
         
         for year in range(2025, 2024, -1):  # 2025 to 2024 in descending order
             for region in range(1, 10):  # 1 to 9 for all regions
@@ -193,7 +193,7 @@ def main():
         logger.error("Both --region and --year must be provided together.")
         sys.exit(1)
     
-    logger.info(f"Scraping complete! Processed {len(valid_ids)} certificates.")
+    logger.debug(f"Scraping complete! Processed {len(valid_ids)} certificates.")
     
     # Parse certificates after scraping unless --skip-parse flag is set
     if not args.skip_parse:

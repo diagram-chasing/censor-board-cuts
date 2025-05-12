@@ -118,6 +118,6 @@ def get_tokens(output_dir: str = None):
 
 if __name__ == "__main__":
     if get_tokens():
-        logger.info("Token retrieval process completed successfully")
+        logger.debug("Token retrieval process completed successfully")
     else:
         logger.error("Token retrieval process failed")

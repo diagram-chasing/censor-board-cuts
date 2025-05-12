@@ -32,7 +32,7 @@ class CBFCParser:
             try:
                 with open(self.processed_file, 'r') as f:
                     self.processed_ids = set(json.load(f))
-                logger.info(f"Loaded {len(self.processed_ids)} previously processed IDs")
+                logger.debug(f"Loaded {len(self.processed_ids)} previously processed IDs")
             except Exception as e:
                 logger.error(f"Error loading processed IDs: {str(e)}")
 
@@ -217,17 +217,17 @@ class CBFCParser:
                                 certificate_info.update(endorsement)
 
             if certificate_info.get('certificate_id') and certificate_info.get('title'):
-                logger.info(f"Successfully parsed: {certificate_info['title']} (Certificate ID: {certificate_id})")
+                logger.debug(f"Successfully parsed: {certificate_info['title']} (Certificate ID: {certificate_id})")
                 return certificate_info
             elif certificate_info.get('certificate_id') and certificate_info.get('film_name'):
-                logger.info(f"Successfully parsed: {certificate_info['film_name']} (Certificate ID: {certificate_id})")
+                logger.debug(f"Successfully parsed: {certificate_info['film_name']} (Certificate ID: {certificate_id})")
                 return certificate_info
             elif certificate_info.get('certificate_id') and certificate_info.get('film_name_full'):
-                logger.info(f"Successfully parsed: {certificate_info['film_name_full']} (Certificate ID: {certificate_id})")
+                logger.debug(f"Successfully parsed: {certificate_info['film_name_full']} (Certificate ID: {certificate_id})")
                 return certificate_info
             else:
-                logger.warning(f"Incomplete data for certificate ID {certificate_id}")
-                logger.warning(f"Following certificate details extracted: {certificate_info}")
+                logger.debug(f"Incomplete data for certificate ID {certificate_id}")
+                logger.debug(f"Following certificate details extracted: {certificate_info}")
                 return None
 
         except Exception as e:
@@ -246,7 +246,7 @@ class CBFCParser:
                     for row in reader:
                         if 'id' in row and row['id']:
                             ids_in_csv.add(row['id'])
-                logger.info(f"Found {len(ids_in_csv)} certificate IDs in existing metadata.csv")
+                logger.debug(f"Found {len(ids_in_csv)} certificate IDs in existing metadata.csv")
             except Exception as e:
                 logger.error(f"Error reading metadata CSV: {str(e)}")
         
@@ -274,7 +274,7 @@ class CBFCParser:
             # Write dataframe to file
             df.to_csv(csv_path, index=False)
                 
-            logger.info(f"Sorted and deduplicated {csv_path} by {sort_fields} (removed {rows_before - len(df)} duplicates)")
+            logger.debug(f"Sorted and deduplicated {csv_path} by {sort_fields} (removed {rows_before - len(df)} duplicates)")
             
         except Exception as e:
             logger.error(f"Error sorting/deduplicating {csv_path}: {str(e)}")
@@ -320,7 +320,7 @@ class CBFCParser:
         
         # Filter out already processed files
         files_to_process = [f for f in html_files if f.stem not in self.processed_ids]
-        logger.info(f"Found {total_files} HTML files, {len(files_to_process)} not yet processed")
+        logger.debug(f"Found {total_files} HTML files, {len(files_to_process)} not yet processed")
         
         metadata_records = []
         modification_records = []
@@ -349,7 +349,7 @@ class CBFCParser:
             new_fields = [key for key in result.keys() if key not in metadata_fields]
             if new_fields:
                 metadata_fields.extend(new_fields)
-                logger.info(f"Added {len(new_fields)} new fields to metadata: {', '.join(new_fields)}")
+                logger.debug(f"Added {len(new_fields)} new fields to metadata: {', '.join(new_fields)}")
             
             # Ensure all required fields exist
             for field in metadata_fields:
@@ -417,7 +417,7 @@ class CBFCParser:
             
             processed_count += 1
             if processed_count % 100 == 0:
-                logger.info(f"Processed {processed_count}/{len(files_to_process)} files")
+                logger.debug(f"Processed {processed_count}/{len(files_to_process)} files")
         
         # Sort and deduplicate the CSV files
         if metadata_path.exists():
@@ -426,7 +426,7 @@ class CBFCParser:
         if modifications_path.exists():
             self.sort_and_deduplicate_csv(str(modifications_path), ['film_name', 'certificate_id', 'cut_no'])
         
-        logger.info(f"Completed processing. Parsed {len(metadata_records)} certificates with {len(modification_records)} modifications.")
+        logger.debug(f"Completed processing. Parsed {len(metadata_records)} certificates with {len(modification_records)} modifications.")
         return len(metadata_records), len(modification_records)
 
 def main():

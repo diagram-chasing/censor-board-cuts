@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import csv
+import logging
 import time
 import argparse
 import pandas as pd
@@ -8,6 +9,16 @@ import base64
 from urllib.parse import urlparse, parse_qs
 from bs4 import BeautifulSoup
 from pathlib import Path
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 def extract_table_data(html_content):
     """Extract data from table with appropriate classes"""
@@ -126,7 +137,7 @@ def parse_args():
 def deduplicate_and_sort_csv(csv_path):
     """Deduplicate and sort the CSV file"""
     if not os.path.exists(csv_path):
-        print(f"Error: {csv_path} does not exist")
+        logger.error(f"Error: {csv_path} does not exist")
         return
     
     try:
@@ -149,12 +160,12 @@ def deduplicate_and_sort_csv(csv_path):
         # Write back to the same file
         df.to_csv(csv_path, index=False)
         
-        print(f"Deduplicated {original_count - deduplicated_count} rows")
-        print(f"Sorted by 'Movie Name' and 'Certificate No' in descending order")
-        print(f"Final CSV contains {deduplicated_count} rows")
+        logger.debug(f"Deduplicated {original_count - deduplicated_count} rows")
+        logger.debug(f"Sorted by 'Movie Name' and 'Certificate No' in descending order")
+        logger.debug(f"Final CSV contains {deduplicated_count} rows")
     
     except Exception as e:
-        print(f"Error during deduplication and sorting: {e}")
+        logger.error(f"Error during deduplication and sorting: {e}")
 
 def extract_recid(url):
     """Extract and decode the recid parameter from URL."""
@@ -168,7 +179,7 @@ def extract_recid(url):
         decoded = decoded.replace('/', '_')
         return decoded
     except:
-        print(f"Error decoding recid for URL: {url}")
+        logger.error(f"Error decoding recid for URL: {url}")
         return None
 
 def main():
@@ -192,7 +203,7 @@ def main():
     
     # Check if directory exists
     if not input_dir.exists() or not input_dir.is_dir():
-        print(f"Error: Directory {input_dir} does not exist")
+        logger.error(f"Error: Directory {input_dir} does not exist")
         return
     
     # Get all HTML files or filter by recent recids
@@ -201,23 +212,23 @@ def main():
     if args.all:
         # Process all HTML files in the input directory
         html_files = list(input_dir.glob('*.html'))
-        print(f"Found {len(html_files)} HTML files in directory")
+        logger.debug(f"Found {len(html_files)} HTML files in directory")
         
         total_files = len(html_files)
         
         if total_files == 0:
-            print("No HTML files found, nothing to process")
+            logger.debug("No HTML files found, nothing to process")
             return
             
         # Apply file limit if specified
         if max_files > 0 and total_files > max_files:
-            print(f"Limiting to {max_files} files out of {total_files} available")
+            logger.debug(f"Limiting to {max_files} files out of {total_files} available")
             html_files = html_files[:max_files]
             total_files = len(html_files)
     else:
         # Check if recent file exists
         if not os.path.exists(recent_file):
-            print(f"Error: Recent file {recent_file} does not exist")
+            logger.error(f"Error: Recent file {recent_file} does not exist")
             return
         
         # Load recent recids from the CSV file
@@ -236,16 +247,16 @@ def main():
                             if recid:
                                 recent_recids.add(recid)
                 else:
-                    print(f"Error: Neither 'recid' nor 'URL' column found in {recent_file}")
+                    logger.error(f"Error: Neither 'recid' nor 'URL' column found in {recent_file}")
                     return
             
-            print(f"Loaded {len(recent_recids)} recent recids from {recent_file}")
+            logger.debug(f"Loaded {len(recent_recids)} recent recids from {recent_file}")
         except Exception as e:
-            print(f"Error loading recent recids: {e}")
+            logger.error(f"Error loading recent recids: {e}")
             return
         
         if not recent_recids:
-            print("No recent recids found, nothing to process")
+            logger.debug("No recent recids found, nothing to process")
             return
         
         # Filter HTML files to only those matching recent recids
@@ -256,15 +267,15 @@ def main():
                 html_files.append(file_path)
         
         total_files = len(html_files)
-        print(f"Found {total_files} HTML files matching recent recids")
+        logger.debug(f"Found {total_files} HTML files matching recent recids")
         
         if total_files == 0:
-            print("No matching HTML files found, nothing to process")
+            logger.debug("No matching HTML files found, nothing to process")
             return
         
         # Apply file limit if specified
         if max_files > 0 and total_files > max_files:
-            print(f"Limiting to {max_files} files out of {total_files} available")
+            logger.debug(f"Limiting to {max_files} files out of {total_files} available")
             html_files = html_files[:max_files]
             total_files = len(html_files)
     
@@ -284,7 +295,7 @@ def main():
     for i, file_path in enumerate(html_files, 1):
         try:
             if i % 50 == 0 or i == 1 or i == total_files:
-                print(f"Processing file {i}/{total_files} ({i/total_files*100:.1f}%)...")
+                logger.debug(f"Processing file {i}/{total_files} ({i/total_files*100:.1f}%)...")
             
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
                 content = file.read()
@@ -302,33 +313,33 @@ def main():
             processed_files += 1
             
         except Exception as e:
-            print(f"Error processing {file_path.name}: {e}")
+            logger.error(f"Error processing {file_path.name}: {e}")
             failed_files += 1
     
     # Now write all data to CSV
-    print("\nWriting data to CSV...")
+    logger.debug("\nWriting data to CSV...")
     total_records = save_data_to_csv(all_data, output_file, args.append)
     
     # Deduplicate and sort the output file
-    print("\nDeduplicating and sorting the output file...")
+    logger.debug("\nDeduplicating and sorting the output file...")
     deduplicate_and_sort_csv(output_file)
     
     # Save failed files list
     if failed_files_list:
-        print(f"Saving list of {len(failed_files_list)} files with no appropriate table...")
+        logger.debug(f"Saving list of {len(failed_files_list)} files with no appropriate table...")
         save_failed_files(failed_files_list, failed_files_output)
     
     # Final statistics
     elapsed_time = time.time() - start_time
-    print("\nExtraction complete:")
-    print(f"  Total files processed: {processed_files}/{total_files}")
-    print(f"  Failed files: {failed_files}")
-    print(f"  Files with no table: {len(failed_files_list)}")
-    print(f"  Total new records extracted: {total_records}")
-    print(f"  Total processing time: {elapsed_time:.2f} seconds")
-    print(f"  Average processing time per file: {elapsed_time/total_files:.4f} seconds")
-    print(f"  Data saved to: {output_file}")
-    print(f"  Failed files list saved to: {failed_files_output}")
+    logger.debug("\nExtraction complete:")
+    logger.debug(f"  Total files processed: {processed_files}/{total_files}")
+    logger.debug(f"  Failed files: {failed_files}")
+    logger.debug(f"  Files with no table: {len(failed_files_list)}")
+    logger.debug(f"  Total new records extracted: {total_records}")
+    logger.debug(f"  Total processing time: {elapsed_time:.2f} seconds")
+    logger.debug(f"  Average processing time per file: {elapsed_time/total_files:.4f} seconds")
+    logger.debug(f"  Data saved to: {output_file}")
+    logger.debug(f"  Failed files list saved to: {failed_files_output}")
 
 if __name__ == "__main__":
     main()

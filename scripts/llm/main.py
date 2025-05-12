@@ -233,7 +233,7 @@ def get_completed_ids(completed_file):
                             certificate_id, cut_no = parts[0], parts[1]
                             completed_ids.add((certificate_id, str(cut_no)))
                 
-            logger.info(f"Loaded {len(completed_ids)} IDs from completed file")
+            logger.debug(f"Loaded {len(completed_ids)} IDs from completed file")
         except Exception as e:
             logger.error(f"Error reading completed IDs file: {e}")
     else:
@@ -253,14 +253,14 @@ def append_completed_id(completed_file, cert_id, cut_no):
 def update_completed_file(output_file):
     """Extract all processed IDs from the output CSV file and update the completed file"""
     if not os.path.exists(output_file) or os.path.getsize(output_file) == 0:
-        logger.info(f"No output file found or file is empty")
+        logger.debug(f"No output file found or file is empty")
         return set()
     
     try:
         df = pd.read_csv(output_file)
         if 'certificate_id' in df.columns and 'cut_no' in df.columns:
             completed_ids = set(zip(df['certificate_id'].astype(str), df['cut_no'].astype(str)))
-            logger.info(f"Extracted {len(completed_ids)} completed IDs from output file")
+            logger.debug(f"Extracted {len(completed_ids)} completed IDs from output file")
             return completed_ids
         else:
             logger.warning(f"Output file lacks 'certificate_id' or 'cut_no' columns")
@@ -281,7 +281,7 @@ def process_csv(input_file, output_file, completed_file=None, limit=None, rebuil
     
     # If rebuild_log flag is set, extract IDs from output file and rebuild completed file
     if rebuild_log and os.path.exists(output_file):
-        logger.info("Rebuilding completed IDs file from output file")
+        logger.debug("Rebuilding completed IDs file from output file")
         completed_ids = update_completed_file(output_file)
         if completed_ids:
             # Create a new completed file with extracted IDs
@@ -289,7 +289,7 @@ def process_csv(input_file, output_file, completed_file=None, limit=None, rebuil
                 for cert_id, cut_no in completed_ids:
                     f.write(f"{cert_id},{cut_no}\n")
             
-            logger.info(f"Rebuilt completed file with {len(completed_ids)} IDs")
+            logger.debug(f"Rebuilt completed file with {len(completed_ids)} IDs")
     else:
         # Get already completed IDs from completed file
         completed_ids = get_completed_ids(completed_file)
@@ -302,8 +302,8 @@ def process_csv(input_file, output_file, completed_file=None, limit=None, rebuil
     # Read the input CSV file
     try:
         df = pd.read_csv(input_file)
-        logger.info(f"Loaded input CSV with {len(df)} rows")
-        logger.info(f"Will add {len(ai_columns)} AI columns")
+        logger.debug(f"Loaded input CSV with {len(df)} rows")
+        logger.debug(f"Will add {len(ai_columns)} AI columns")
         
     except Exception as e:
         logger.error(f"Error loading input CSV file: {e}")
@@ -321,24 +321,24 @@ def process_csv(input_file, output_file, completed_file=None, limit=None, rebuil
         df_to_process = df[~df.apply(lambda row: (row['certificate_id'], row['cut_no']) in completed_ids, axis=1)]
         completed_count = original_row_count - len(df_to_process)
         if completed_count > 0:
-            logger.info(f"Skipping {completed_count} already completed rows")
+            logger.debug(f"Skipping {completed_count} already completed rows")
         else:
-            logger.info("No rows to skip based on completed file")
+            logger.debug("No rows to skip based on completed file")
     else:
         logger.warning("Input file lacks ID columns. Processing all rows")
         df_to_process = df
 
     if df_to_process.empty:
-        logger.info("All necessary rows already processed")
+        logger.info("No new modifications found in input files. Skipping analysis.")
         return # Exit if nothing to do
 
     # Limit the number of rows to process if specified (after filtering)
     if limit is not None: # Allow limit=0
         df_to_process = df_to_process.head(limit)
-        logger.info(f"Processing limit applied: {len(df_to_process)} rows for this run")
+        logger.debug(f"Processing limit applied: {len(df_to_process)} rows for this run")
 
     if df_to_process.empty and limit is not None:
-        logger.info("No rows left to process after applying limit")
+        logger.debug("No rows left to process after applying limit")
         return
 
     # Determine if header needs to be written
@@ -452,7 +452,7 @@ if __name__ == "__main__":
     # Check if the input file exists
     if not os.path.exists(input_file):
         logger.error(f"Input file not found at {input_file}")
-        logger.info(f"Current directory: {current_dir}")
+        logger.debug(f"Current directory: {current_dir}")
         exit(1)
     
     # Process the CSV file

@@ -1,10 +1,21 @@
 import csv
 import base64
+import logging
 import os
 import requests
 import time
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 def extract_recid(url):
     """Extract and decode the recid parameter from URL."""
@@ -18,7 +29,7 @@ def extract_recid(url):
         decoded = decoded.replace('/', '_')
         return decoded
     except:
-        print(f"Error decoding recid for URL: {url}")
+        logger.error(f"Error decoding recid for URL: {url}")
         return None
 
 def fetch_and_save(url, output_dir):
@@ -33,7 +44,7 @@ def fetch_and_save(url, output_dir):
         
         # Skip if file already exists
         if os.path.exists(filepath):
-            print(f"File {filename} already exists, skipping...")
+            logger.debug(f"File {filename} already exists, skipping...")
             return True
         
         response = requests.get(url)
@@ -46,7 +57,7 @@ def fetch_and_save(url, output_dir):
         time.sleep(0.1)
         return True
     except Exception as e:
-        print(f"Error fetching {url}: {str(e)}")
+        logger.error(f"Error fetching {url}: {str(e)}")
         return False
 
 def main():
@@ -69,11 +80,11 @@ def main():
                 
                 # Print progress every 100 files
                 if total % 100 == 0:
-                    print(f"Processed {total} files, {success} successful")
+                    logger.debug(f"Processed {total} files, {success} successful")
     
-    print(f"\nProcessing complete!")
-    print(f"Total files processed: {total}")
-    print(f"Successfully saved: {success}")
+    logger.debug(f"\nProcessing complete!")
+    logger.debug(f"Total files processed: {total}")
+    logger.debug(f"Successfully saved: {success}")
 
 if __name__ == "__main__":
     main()

@@ -11,7 +11,8 @@ import datetime  # Added import for date handling
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
         logging.FileHandler('pipeline.log'),
         logging.StreamHandler()
@@ -24,7 +25,7 @@ def read_last_fetched_date():
         if os.path.exists('.last-fetched-date'):
             with open('.last-fetched-date', 'r') as f:
                 date_str = f.read().strip()
-                logging.info(f"Read last fetched date: {date_str}")
+                logging.debug(f"Last fetched date: {date_str}")
                 return date_str
         else:
             logging.warning("No .last-fetched-date file found, using empty date (fetches all data)")
@@ -40,14 +41,14 @@ def run_script(script_name, args=None):
         if args:
             cmd.extend(args)
             
-        logging.info(f"Running {script_name} {' '.join(args) if args else ''}")
+        logging.debug(f"Running {script_name} {' '.join(args) if args else ''}")
         start_time = time.time()
         
         # Run the script and wait for it to complete
         result = subprocess.run(cmd, check=True)
         
         end_time = time.time()
-        logging.info(f"Successfully completed {script_name} in {end_time - start_time:.2f} seconds")
+        logging.debug(f"Successfully completed {script_name} in {end_time - start_time:.2f} seconds")
         return True
     except subprocess.CalledProcessError as e:
         logging.error(f"Error running {script_name}: {e}")
@@ -88,8 +89,6 @@ def main():
     # Get the current directory (where this script is located)
     script_dir = Path(__file__).parent.absolute()
     os.chdir(script_dir)
-    
-    logging.info("Starting data processing pipeline")
     
     # Get the last fetched date to use as from_date for fetch.py
     from_date = read_last_fetched_date()

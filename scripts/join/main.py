@@ -32,7 +32,7 @@ def join_datasets(project_root):
         bool: True if the operation was successful, False otherwise
     """
     try:
-        logger.info("Joining datasets to create the final data.csv file")
+        logger.debug("Joining datasets to create the final data.csv file")
         
         # Define file paths
         metadata_modifications_path = project_root / "data" / "individual_files" / "metadata_modifications.csv"
@@ -47,23 +47,23 @@ def join_datasets(project_root):
                 return False
         
         # Read the input files
-        logger.info(f"Reading {metadata_modifications_path}")
+        logger.debug(f"Reading {metadata_modifications_path}")
         metadata_df = pd.read_csv(metadata_modifications_path)
         
-        logger.info(f"Reading {imdb_path}")
+        logger.debug(f"Reading {imdb_path}")
         imdb_df = pd.read_csv(imdb_path, sep=';')
         imdb_df.columns = ["imdb_" + col for col in imdb_df.columns]
         imdb_df.rename(columns={'imdb_original_id': 'id'}, inplace=True)
         imdb_df.rename(columns={'imdb_imdb_id': 'imdb_id'}, inplace=True)
         
-        logger.info(f"Reading {llm_path}")
+        logger.debug(f"Reading {llm_path}")
         llm_df = pd.read_csv(llm_path)
         
         # Join the dataframes
-        logger.info("Merging datasets...")
-        logger.info("Original length of metadata_df: " + str(len(metadata_df)))
-        logger.info("Original length of imdb_df: " + str(len(imdb_df)))
-        logger.info("Original length of llm_df: " + str(len(llm_df)))
+        logger.debug("Merging datasets...")
+        logger.debug("Original length of metadata_df: " + str(len(metadata_df)))
+        logger.debug("Original length of imdb_df: " + str(len(imdb_df)))
+        logger.debug("Original length of llm_df: " + str(len(llm_df)))
         
         # Merge with LLM data using both certificate_id and cut_no as the common keys
         merged_df = pd.merge(
@@ -73,7 +73,7 @@ def join_datasets(project_root):
             how="left"
         )
 
-        logger.info("Length after merging with llm: " + str(len(merged_df)))
+        logger.debug("Length after merging with llm: " + str(len(merged_df)))
 
         # Merge with IMDb data using id as the common key
         merged_df = pd.merge(
@@ -83,13 +83,13 @@ def join_datasets(project_root):
             how="left"
         )
 
-        logger.info("Length after merging with imdb: " + str(len(merged_df)))
+        logger.debug("Length after merging with imdb: " + str(len(merged_df)))
         
         # Save the final dataset
-        logger.info(f"Saving joined dataset to {output_path}")
+        logger.debug(f"Saving joined dataset to {output_path}")
         merged_df.to_csv(output_path, index=False)
         
-        logger.info(f"Successfully created {output_path}")
+        logger.debug(f"Successfully created {output_path}")
         return True
     except Exception as e:
         logger.error(f"Error joining datasets: {e}")
@@ -106,7 +106,7 @@ def main():
     project_root = Path(__file__).parent.parent.parent.absolute()
     
     logger.info("Starting data join process")
-    logger.info(f"Project root: {project_root}")
+    logger.debug(f"Project root: {project_root}")
     
     # Join the datasets
     if not join_datasets(project_root):

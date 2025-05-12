@@ -34,7 +34,8 @@ args = parser.parse_args()
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
         logging.FileHandler('cbfc_scraper.log'),
         logging.StreamHandler()
@@ -182,7 +183,7 @@ def get_and_solve_captcha(session, max_attempts=5):
                         
                         # Validate captcha format (should be 6 characters and alphanumeric)
                         if len(captcha_text) >= 5 and all(c in '0123456789abcdefghijklmnopqrstuvwxyz' for c in captcha_text.lower()):
-                            logging.info(f"Detected captcha: {captcha_text} (method: {method_name}, psm: {psm})")
+                            logging.debug(f"Detected captcha: {captcha_text} (method: {method_name}, psm: {psm})")
                             return captcha_text
                 
                 except Exception as e:
@@ -267,7 +268,7 @@ def search_films_by_character(character, max_attempts=None):
             with open(output_file, 'w', encoding='utf-8') as f:
                 f.write(response.text)
             
-            logging.info(f"Successfully saved search results for '{character}' to {output_file}")
+            logging.debug(f"Successfully saved search results for '{character}' to {output_file}")
             return True
             
         except Exception as e:
@@ -279,7 +280,7 @@ def search_films_by_character(character, max_attempts=None):
 # Main function to search for specified characters
 def main():
     characters = parse_characters(args.characters)
-    logging.info(f"Will process the following characters: {', '.join(characters)}")
+    logging.debug(f"Will process the following characters: {', '.join(characters)}")
     if args.from_date:
         logging.info(f"Searching from date: {args.from_date}")
     else:
@@ -291,7 +292,7 @@ def main():
         if search_films_by_character(char):
             # Add a longer delay between successful characters
             delay = random.uniform(args.delay_min, args.delay_max)
-            logging.info(f"Waiting {delay:.2f} seconds before next request...")
+            logging.debug(f"Waiting {delay:.2f} seconds before next request...")
             time.sleep(delay)
         else:
             # Add a longer delay after failures to avoid being rate-limited
@@ -301,7 +302,7 @@ def main():
 
 if __name__ == "__main__":
     logging.info("Starting CBFC film search...")
-    logging.info(f"Output directory: {args.output_dir}")
+    logging.debug(f"Output directory: {args.output_dir}")
     main()
     date_range_msg = f"from {args.from_date}" if args.from_date else "with no date restriction"
     logging.info(f"Search completed {date_range_msg}. Results saved in {args.output_dir} directory.")
