@@ -207,11 +207,6 @@ def clean_metadata(df):
     else:
         df['duration_secs'] = np.nan
     
-    # Convert categorical columns
-    for col in ['category', 'language', 'format']:
-        if col in df.columns:
-            df[col] = df[col].astype('category')
-    
     # Handle empty strings as NA
     for col in ['applicant', 'certifier']:
         if col in df.columns:
@@ -456,49 +451,6 @@ def clean_embedded_content(df):
     else:
         result['film_base_name'] = np.nan
     
-    # Set primary_language to the existing language column
-    # No extraction from film_name_full or other sources
-    if 'language' in result.columns:
-        result['primary_language'] = result['language']
-    else:
-        result['primary_language'] = np.nan
-    
-    # Standardize language capitalization if it exists
-    if 'primary_language' in result.columns and result['primary_language'].notna().any():
-        # Proper title case for language names
-        def standardize_language(lang):
-            if pd.isna(lang):
-                return np.nan
-                
-            # Convert language to title case (first letter of each word capitalized)
-            words = str(lang).lower().split()
-            title_case_words = []
-            
-            for word in words:
-                # Special case for words like "with" that should remain lowercase
-                if word.lower() in ['with', 'and', 'in', 'of', 'the', 'for']:
-                    title_case_words.append(word.lower())
-                # Handle hyphenated words
-                elif '-' in word:
-                    subwords = word.split('-')
-                    title_case_words.append('-'.join(w.capitalize() for w in subwords))
-                # Normal capitalization
-                else:
-                    title_case_words.append(word.capitalize())
-                    
-            return ' '.join(title_case_words)
-        
-        # Apply standardization only to non-NA values
-        mask = result['primary_language'].notna()
-        if mask.any():
-            result.loc[mask, 'primary_language'] = result.loc[mask, 'primary_language'].apply(standardize_language)
-    
-    # Final cleanup for language columns
-    for col in ['primary_language', 'language']:
-        if col in result.columns:
-            result[col] = result[col].replace('', np.nan)
-            result[col] = result[col].replace('nan', np.nan)
-    
     elapsed = time.time() - start_time
     logger.info(f"Embedded content cleaning completed in {elapsed:.2f} seconds")
     return result
@@ -633,10 +585,16 @@ def main():
             
             for _, row in categories_data.iterrows():
                 if pd.notna(row['normalized_cert_no']):
-                    # Map language if available
+                    # Map language if available (remove subtitles language)
                     if pd.notna(row['Movie Language']):
-                        language_map[row['normalized_cert_no']] = row['Movie Language']
-                    
+                        language = row['Movie Language'].title()
+                        language = language.split('with')[0].strip()
+                        language = language.split('With')[0].strip()
+                        language = language.split('(')[0].strip()
+                        language = language.lstrip(' ').rstrip(' ')
+                        language = language.replace('Partly', 'partly')
+                        language_map[row['normalized_cert_no']] = language
+
                     # Map rating if available
                     if pd.notna(row['Movie Category']):
                         rating_map[row['normalized_cert_no']] = row['Movie Category']
@@ -654,12 +612,6 @@ def main():
                     # Map cert_date if available
                     if pd.notna(row['Certificate Date']):
                         cert_date_map[row['normalized_cert_no']] = row['Certificate Date']
-            
-            # Convert categorical columns to string type before updating
-            if 'language' in metadata_cleaned.columns and pd.api.types.is_categorical_dtype(metadata_cleaned['language']):
-                metadata_cleaned['language'] = metadata_cleaned['language'].astype(str)
-            elif 'language' not in metadata_cleaned.columns:
-                metadata_cleaned['language'] = np.nan
             
             # Create rating column if it doesn't exist
             if 'rating' not in metadata_cleaned.columns:
@@ -811,7 +763,7 @@ def main():
     logger.info("Selecting and reformatting final columns...")
     final_cols = [
         'id', 'certificate_id_x', 'movie_name', 'movie_base_name',
-        'language',  # Use language directly without primary_language
+        'language',
         'duration_secs',
         'mod_tags', 'content_tags', 'type_tags',
         'description',
