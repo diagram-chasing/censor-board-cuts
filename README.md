@@ -21,6 +21,7 @@ Further data is available in the [data/](/data/) directory.
 The following scripts fetch data from the CBFC website:
 - [`scripts/certificates/`](scripts/certificates/): Film metadata, modifications
 - [`scripts/categories/`](scripts/categories): Film categories
+
 The above scripts incrementally fetch new films and append them to the relevant CSV files. After fetching the data from the CBFC website, code-based analysis of the metadata and modifications is done in [`scripts/analysis/`](scripts/analysis/) and LLM-based analysis is done in [`scripts/llm/`](scripts/llm/). Next, [`scripts/imdb/`](scripts/imdb/) further enhances the metadata and all the fetched data is joined together using [`scripts/join/`](scripts/join/) which saves the final data in [`data/data.csv`](data/data.csv).
 
 ## Data Analysis
