@@ -84,6 +84,14 @@ def join_datasets(project_root):
         )
 
         logger.debug("Length after merging with imdb: " + str(len(merged_df)))
+
+        # Set 0 for blank values in imdb_id column and convert column to int
+        merged_df['imdb_id'] = merged_df['imdb_id'].fillna(0)
+        merged_df['imdb_id'] = merged_df['imdb_id'].astype(int)
+
+        # Set 0 for blank values in imdb_year column and convert column to int
+        merged_df['imdb_year'] = merged_df['imdb_year'].fillna(0)
+        merged_df['imdb_year'] = merged_df['imdb_year'].astype(int)
         
         # Save the final dataset
         logger.debug(f"Saving joined dataset to {output_path}")
