@@ -1,37 +1,35 @@
-# CBFC Data Collection and Analysis
+# censor-board-cuts
 
-Collect and analyze film certification data from the Central Board of Film Certification (CBFC) in India.
+Dataset and related anlysis of modifications or cuts made by the [Central Board of Film Certification (CBFC), India](https://www.cbfcindia.gov.in/).
 
-This project consists of two main components:
+The dataset consists of two main components:
 
-- Data Collection: A Python-based scraper that collects film certification data from the CBFC website
-- Analysis: Scripts for cleaning and analyzing the collected data.
+- Raw Data: Raw category and certificate data from the CBFC website, stored in [`data/raw/`](data/raw/)
+- Processed Data: Cleaned up data enhanced with code-based and LLM-based analysis of cuts, stored in [`data/data.csv`](data/data.csv)
 
-## Preview Data
+## Preview
 
-- [Modifications](https://flatgithub.com/diagram-chasing/censor-board-cuts?filename=data%2Fmodifications.csv&sha=master)
-- [Certifications](https://flatgithub.com/diagram-chasing/censor-board-cuts?filename=data%2Fmetadata.csv&sha=master)
+- [Modifications](https://flatgithub.com/diagram-chasing/censor-board-cuts?filename=data%2Fraw%2Fmodifications.csv) (~20MB)
+- [Metadata](https://flatgithub.com/diagram-chasing/censor-board-cuts?filename=data%2Fraw%2Fmetadata.csv) (~40MB)
+- [Categories](https://flatgithub.com/diagram-chasing/censor-board-cuts?filename=data%2Fraw%categories.csv) (~100MB)
+- [Processed Dataset](https://flatgithub.com/diagram-chasing/censor-board-cuts?filename=data%data.csv) (~100MB)
 
-More available in the [data folder](/data/).
+Further data is available in the [data/](/data/) directory.
 
 ## Data Collection
 
-The scraper (scripts/certificates/) collects:
+The following scripts fetch data from the CBFC website:
+- [`scripts/certificates/`](scripts/certificates/): Film metadata, modifications
+- [`scripts/categories/`](scripts/categories): Film categories
+The above scripts incrementally fetch new films and append them to the relevant CSV files. After fetching the data from the CBFC website, code-based analysis of the metadata and modifications is done in [`scripts/analysis/`](scripts/analysis/) and LLM-based analysis is done in [`scripts/llm/`](scripts/llm/). Next, [`scripts/imdb/`](scripts/imdb/) further enhances the metadata and all the fetched data is joined together using [`scripts/join/`](scripts/join/) which saves the final data in [`data/data.csv`](data/data.csv).
 
-- Film metadata (title, language, duration, etc.)
-- Certification details
-- Content modifications/cuts
+## Data Analysis
 
-More information is available in the [certificates/README.md](scripts/certificates/README.md) file. Each row is incrementally saved to the relevant CSV files and the scraper can resume from the last processed ID (the methodology is described in the README).
-
-## Analysis
-
-Python scripts to (scripts/analysis/) clean and process the raw data:
-
+The code-based analysis is done by a Python script [`scripts/analysis/main.py`](scripts/analysis/main.py) that cleans and processes the raw data:
 - Standardizes duration formats and attempts to pull out timestamps from the descriptions.
 - Categorizes modifications based on type (audio, visual, deletion, etc.) and the basic type of content (violence, nudity, etc.) using an LLM.
 
-## TODO:
+## TODO
 
 - [ ] [Fetching IDs for a specific state+year](../../issues/1)
 - [ ] [Classifying types of media (movies, trailers, songs, etc.)](../../issues/2)
@@ -41,7 +39,7 @@ Python scripts to (scripts/analysis/) clean and process the raw data:
 - [ ] Create a data dictionary documenting all fields.
 - [ ] Create a dashboard for exploring the data.
 
-## Related projects:
+## Related Projects
 
 - https://github.com/harman28/cbfc
 - https://github.com/ananddotiyer/MovieCertifications

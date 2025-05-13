@@ -1,10 +1,10 @@
-# Censor Board Cuts - Data Files
+# censor-board-cuts data
 
-This folder contains datasets related to film censorship and modifications made by the certification board.
+Dataset files of modifications or cuts made by the [Central Board of Film Certification (CBFC), India](https://www.cbfcindia.gov.in/).
 
-## Main Dataset
+## Processed Data
 
-- `data.csv`: Consolidated dataset containing film information, censorship details, and metadata. Includes certificate IDs, film names, languages, descriptions of cuts, modification times, certification dates, along with IMDb data and AI-processed content classifications.
+- [`data.csv`](data.csv): Consolidated dataset containing film information, censorship details, and metadata. Includes certificate IDs, film names, languages, descriptions of cuts, modification times, certification dates, along with IMDb data and AI-processed content classifications.
 
 ### Data Dictionary
 
@@ -57,10 +57,9 @@ Various columns are extracted using scripts available in the [scripts/](../scrip
 
 ## Raw Data
 
-- `metadata.csv`: Raw film metadata
-- `modifications.csv`: Raw modifications data
-- `categories.csv`: Raw categories data
-- `imdb.csv`: Raw IMDb search match data
-- `llm.csv`: Raw LLM processed modifications data
-- `recent.csv`: Recent film certifications
-
+- [`raw/metadata.csv`](raw/metadata.csv): Raw film metadata
+- [`raw/modifications.csv`](raw/modifications.csv): Raw modifications data
+- [`raw/categories.csv`](raw/categories.csv): Raw categories data
+- [`raw/imdb.csv`](raw/imdb.csv): Raw IMDb search match data
+- [`raw/llm.csv`](raw/llm.csv): Raw LLM processed modifications data
+- [`raw/recent.csv`](raw/recent.csv): Recent film certifications

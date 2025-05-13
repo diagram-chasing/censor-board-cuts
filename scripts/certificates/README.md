@@ -1,16 +1,27 @@
-# CBFC Scraper
+# censor-board-cuts certificates script
 
-This is a Python script that scrapes data from the CBFC website.
+The certificates pipeline fetches film certificates from the Central Board of Film Certification (CBFC) India website.
 
 ## Usage
 
+To run the certificates pipeline with default settings:
 ```bash
 python main.py
 ```
 
-## Notes
+## Pipeline Workflow
 
-### Understanding Certificate IDs
+- **Process**:
+  - Scrapes certificate data from CBFC website
+  - Generates certificate IDs systematically for each regional office and year
+  - Terminates scraping for a region+year combination after encountering consecutive invalid IDs
+  - Collects certificate metadata for valid IDs
+
+- **Output Data**:
+  - Metadata: `../../data/raw/metadata.csv`
+  - Modifications: `../../data/raw/modifications.csv`
+
+## Certificate ID Structure
 
 Each certificate ID is a 16-digit number structured as follows:
 
@@ -37,7 +48,7 @@ Example, the certificate ID `100090292400000109`:
 - "9" in position 5 indicates Thiruvananthapuram regional office
 - "2924" in positions 7-10 represents year 2024 (2024 + 900 = 2924)
 
-## What IDs?
+## Notes
 
 For now, we scrape from 1 to infinity for each combination of state+year, and terminate the scraping for a state+year after encountering consecutive IDs that turn out to be invalid. A little hacky! Unfortunately, there's no database of valid IDs so this brute force approach is what we're stuck with.
 

@@ -1,43 +1,30 @@
-# Join Script
+# censor-board-cuts join script
 
-This script joins multiple datasets to create the final consolidated `data.csv` file for the Censor Board Cuts project.
-
-## Purpose
-
-The join script merges three key datasets:
-1. `data/individual_files/metadata_modifications.csv` - Contains film metadata and modification details
-2. `data/raw/imdb.csv` - Contains IMDB data for films
-3. `data/raw/llm.csv` - Contains LLM-generated analysis of censorship content
-
-The merged dataset is saved as `data/data.csv`, following the schema documented in `data/README.md`.
+The join pipeline consolidates multiple datasets to create the final merged dataset.
 
 ## Usage
 
-To run the join script:
-
+To run the join process:
 ```bash
-python scripts/join/main.py
+python main.py
 ```
 
-## Implementation Details
+## Pipeline Workflow
 
-The script performs the following operations:
-1. Reads the three input CSV files
-2. Merges them using the `certificate_id` as the common key
-3. Performs left joins to ensure all records from the metadata_modifications file are preserved
-4. Saves the combined dataset to `data/data.csv`
+- **Input Data**:
+  - Metadata and modifications: `../../data/individual_files/metadata_modifications.csv`
+  - IMDB data: `../../data/raw/imdb.csv`
+  - LLM analysis: `../../data/raw/llm.csv`
 
-## Integration with Main Pipeline
+- **Process**:
+  - Joining operations:
+    - Reads the three input CSV files
+    - Merges datasets using `certificate_id` as the common key
+    - Performs left joins to preserve all records from metadata_modifications
+    - Follows schema documented in `../../data/README.md`
 
-This script is typically run as step 6 in the main data pipeline. To run only this step:
-
-```bash
-python scripts/main.py --skip-categories --skip-certificates --skip-processing --skip-imdb --skip-llm
-```
-
-## Dependencies
-
-- pandas: For data manipulation and joining operations 
+- **Output Data**:
+  - Final consolidated dataset: `../../data/data.csv`
 
 ## AI Disclaimer
 

@@ -1,109 +1,69 @@
-# CBFC Film Scraper
+# censor-board-cuts categories script
 
-A Python script to fetch film data from the Central Board of Film Certification (CBFC) India website.
-
-## Overview
-
-This script fetches film data from the CBFC website by:
-1. Visiting the search page to obtain cookies
-2. Downloading and solving the CAPTCHA using Tesseract OCR
-3. Submitting search requests for films starting with each letter (A-Z)
-4. Saving the results in separate HTML files
-
-## Requirements
-
-- Python 3.6+
-- Tesseract OCR
-- Python libraries: requests, beautifulsoup4, pytesseract, pillow
-
-## Installation
-
-1. Install Tesseract OCR:
-   - macOS: `brew install tesseract`
-   - Ubuntu/Debian: `sudo apt-get install tesseract-ocr`
-   - Windows: Download and install from [GitHub](https://github.com/UB-Mannheim/tesseract/wiki)
-
-2. Install required Python packages:
-   ```bash
-   pip install requests beautifulsoup4 pytesseract pillow
-   ```
+The categories pipeline fetches film categories from the Central Board of Film Certification (CBFC) India website.
 
 ## Usage
 
-### Basic Usage
-
-Run the script with default settings (searches for all characters A-Z):
+To run the categories pipeline with default settings:
 ```bash
-python fetch.py
+python main.py
 ```
 
-### Command-line Arguments
+### Options
 
-The script supports the following command-line arguments:
+- **Skip data fetching** (useful when you already have raw data):
+  ```bash
+  python main.py --skip-fetch
+  ```
 
-- `--characters` or `-c`: Specify which characters to search for
-  - Range format: `A-Z`, `A-G`, etc.
-  - List format: `A,B,C`
-  - Single character: `A`
-  - Default: `A-Z`
+- **Specify characters** to search for:
+  ```bash
+  python main.py --characters A,B,C   # List format
+  python main.py --characters A-M     # Range format
+  python main.py --characters A       # Single character
+  ```
 
-- `--output-dir` or `-o`: Directory to save results
-  - Default: `cbfc_results`
+## Pipeline Workflow
 
-- `--delay-min`: Minimum delay between requests in seconds
-  - Default: 5
+The pipeline consists of four main steps:
 
-- `--delay-max`: Maximum delay between requests in seconds
-  - Default: 8
+1. **Fetch Data** (`fetch.py`):
+   - Downloads film listings from CBFC website using character search
+   - Solves CAPTCHAs automatically using Tesseract OCR
+   - Saves raw HTML files for each search listing
+   - Uses date tracking to only fetch new data since last run
 
-- `--debug`: Enable debug mode (saves processed captcha images)
+2. **Parse HTML** (`parse.py`):
+   - Extracts basic film information from the HTML files
+   - Removes duplicates and creates a consolidated CSV with film names, years, and URLs
 
-### Examples
+3. **Fetch Categories** (`categories.py`):
+   - Downloads detailed film information pages for each film
+   - Uses the film URLs from the previous step
+   - Saves individual HTML files for each film record
 
-1. Search for movies starting with 'A' only:
-   ```bash
-   python fetch.py -c A
-   ```
+4. **Extract Data** (`extract.py`):
+   - Processes the individual film HTML files
+   - Extracts structured data including certificate details, film metadata, etc.
+   - Creates a comprehensive CSV dataset of all film information
 
-2. Search for movies starting with A, B, or C:
-   ```bash
-   python fetch.py -c A,B,C
-   ```
+## Output Files
 
-3. Search for movies starting with letters A through M:
-   ```bash
-   python fetch.py -c A-M
-   ```
-
-4. Customize output directory and delay:
-   ```bash
-   python fetch.py --output-dir my_results --delay-min 10 --delay-max 15
-   ```
-
-5. Enable debug mode to save processed captcha images:
-   ```bash
-   python fetch.py --debug
-   ```
-
-## Output
-
-The script will:
-- Create an output directory (default: `cbfc_results`) to store results
-- Generate a log file `cbfc_scraper.log` with detailed information
-- Process the specified characters with delays between requests
-- Save search results as HTML files named by letter (e.g., A.html, B.html, etc.)
-
-If debug mode is enabled, it will also save the processed captcha images in a `debug` subdirectory.
+- `pipeline.log`: Detailed execution log
+- `raw/`: Directory containing raw HTML files
+- `raw/categories/`: Directory containing individual film HTML files
+- `../../data/raw/recent.csv`: List of films with their URLs
+- `../../data/raw/categories.csv`: Final structured dataset with all film information
 
 ## Notes
 
-- The script includes randomized delays between requests to avoid overloading the server or triggering anti-scraping measures
-- CAPTCHA recognition might not be 100% accurate, but the script attempts multiple retries
-- The script uses image preprocessing to improve CAPTCHA recognition accuracy
+- The pipeline uses a `.last-fetched-date` file to track and fetch only new data
+- Includes randomized delays between requests to avoid triggering anti-scraping measures
+- CAPTCHA recognition may require multiple retry attempts
 
 ## Legal Disclaimer
 
-This script is intended for educational and personal use only. Ensure that you comply with CBFC's terms of service and robots.txt policies before running automated scripts on their website. 
+This script is intended for educational and personal use only. Ensure that you comply with CBFC's terms of service and robots.txt policies before running automated scripts on their website.
 
 ## AI Disclaimer
 

@@ -1,86 +1,36 @@
-# IMDB Movie Fetcher
+# censor-board-cuts imdb script
 
-A Python script that fetches movie data from IMDB using the Cinemagoer library and enriches the existing movie metadata with IMDB information.
-
-## Overview
-
-This script:
-1. Reads movie titles from a CSV file containing movie metadata
-2. Searches IMDB for each movie title
-3. Retrieves detailed information about each movie (ratings, cast, runtime, etc.)
-4. Saves the IMDB data to a separate CSV file
-5. Joins the original metadata with the IMDB data to create an enhanced dataset
-
-## Requirements
-
-- Python 3.6+
-- Python libraries: 
-  - imdbpy (Cinemagoer)
-  - pandas
-  - tqdm
-  - csv
-  - json
-  - logging
-
-## Installation
-
-Install the required Python packages:
-```bash
-pip install imdbpy pandas tqdm
-```
+The IMDB pipeline fetches movie data from IMDB using the `cinemagoer` library to enrich the metadata.
 
 ## Usage
 
-### Basic Usage
-
-Run the script with default settings:
+To run the IMDB data fetching process:
 ```bash
 python main.py
 ```
 
-## Input/Output
+## Pipeline Workflow
 
-### Input
-- Uses `../../data/individual_files/metadata_modifications.csv` as the input file
-- This file should contain movie metadata with at least `movie_name` and `id` columns
+- **Input Data**:
+  - Movie metadata: `../../data/individual_files/metadata_modifications.csv`
 
-### Output
-- Generates `../../data/individual_files/imdb.csv` with IMDB data for each movie
-- Creates a joined file `../../data/individual_files/metadata_modifications_imdb.csv` that combines the original metadata with IMDB data
-- Maintains a `.completed.json` file to track processed movie IDs for efficient resumability
-- Logs activity to `imdb_fetch.log`
+- **Process**:
+  - Reads movie titles from the input CSV file
+  - Searches IMDB for each movie title
+  - Retrieves detailed movie information for each movie title
+  - Implements resumable processing via completion tracking
+  - Uses rate limiting to avoid IMDB request restrictions
+  - Skips already processed movies
+  - Joins IMDB data with original metadata
 
-## IMDB Data Retrieved
-
-The script extracts the following information for each movie:
-- IMDB ID
-- Title
-- Release year
-- Genres
-- IMDB rating
-- Number of votes
-- Directors
-- Actors (top 10)
-- Runtime
-- Countries of origin
-- Languages
-- Plot overview
-- Release date
-- Writers
-- Production studios
-- Poster URL
-
-## Features
-
-- **Resumable Processing**: Uses a completion tracking system to resume from where it left off
-- **Rate Limiting**: Includes delays between requests to avoid hitting IMDB's rate limits
-- **Duplicate Avoidance**: Skips movies that have already been processed
-- **Detailed Logging**: Comprehensive logging for tracking progress and debugging
+- **Output Data**:
+  - IMDB data: `../../data/individual_files/imdb.csv`
+  - Processing log: `imdb_fetch.log`
+  - Completion tracking: `.completed.json`
 
 ## Notes
 
-- The script uses the first search result from IMDB, which may not always be the correct movie. Manual verification of the results may be necessary.
-- Processing a large number of movies may take significant time due to rate limiting.
+- First search result is used, which may require manual verification and can result in false positive matches
 
 ## AI Disclaimer
 
