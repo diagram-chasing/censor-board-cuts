@@ -1,5 +1,7 @@
 # censor-board-cuts
 
+*Note: Data updates paused as of June 12th, due to breaking changes on the e-Cinepramaan portal*
+
 Dataset and related anlysis of modifications or cuts made by the [Central Board of Film Certification (CBFC), India](https://www.cbfcindia.gov.in/).
 
 The dataset consists of two main components:
@@ -32,12 +34,6 @@ The code-based analysis is done by a Python script [`scripts/analysis/main.py`](
 
 ## TODO
 
-- [ ] [Fetching IDs for a specific state+year](../../issues/1)
-- [ ] [Classifying types of media (movies, trailers, songs, etc.)](../../issues/2)
-- [ ] [Cleaner descriptions of modifications](../../issues/3)
-- [ ] [Create summary statistics and visualizations](../../issues/4)
-- [ ] Better content classification.
-- [ ] Create a data dictionary documenting all fields.
 - [ ] Create a dashboard for exploring the data.
 
 ## Related Projects
