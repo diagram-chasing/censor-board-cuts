@@ -9,19 +9,43 @@ To run the certificates pipeline with default settings:
 python main.py
 ```
 
-## Pipeline Workflow
+## Pipeline Workflow (Default)
 
 - **Process**:
   - Scrapes certificate data from CBFC website
-  - Generates certificate IDs systematically for each regional office and year
-  - Terminates scraping for a region+year combination after encountering consecutive invalid IDs
+  - Uses list of certificate IDs from `certificates.txt`
   - Collects certificate metadata for valid IDs
 
 - **Output Data**:
   - Metadata: `../../data/raw/metadata.csv`
   - Modifications: `../../data/raw/modifications.csv`
 
-## Certificate ID Structure
+### Certificate IDs
+
+The list of certificate IDs is stored in `certificates.txt`. These are exported from the list of certificate URLs contributed on the [CBFC Watch](https://cbfc.watch) contributions page and stored in a Cloudflare KV namespace. Use the command `wrangler kv key list --namespace-id $NAMESPACE_ID --remote | jq '.[] | .metadata.certificateUrl' > certificates.txt` to export the list of certificate URLs from the KV namespace to the `certificates.txt` file.
+
+**Certificate ID Formats:**
+The system now supports two certificate ID formats:
+1. **Legacy numeric format**: 16-digit numbers like `100090292400000145`
+2. **New encoded format**: Base64-encoded strings like `YRZpHtUg5GVvseP6R9BFd5BV0z2zrja4PEK6XhOlioc=`
+
+The scripts automatically handle both formats. For encoded IDs containing special characters (`/`, `+`, `=`), the system sanitizes these for filename storage by replacing them with safe alternatives (`_`, `_plus_`, `_eq_`).
+
+## Pipeline Workflow with --generate-ids flag
+
+- **Process**:
+  - Scrapes certificate data from CBFC website
+  - Generates certificate IDs systematically for each regional office and year (legacy numeric format only)
+  - Terminates scraping for a region+year combination after encountering consecutive invalid IDs
+  - Collects certificate metadata for valid IDs
+
+**Note:** The `--generate-ids` flag only generates legacy numeric format certificate IDs. For new encoded certificate IDs, use the default workflow with `certificates.txt`.
+
+- **Output Data**:
+  - Metadata: `../../data/raw/metadata.csv`
+  - Modifications: `../../data/raw/modifications.csv`
+
+### Certificate ID Structure
 
 Each certificate ID is a 16-digit number structured as follows:
 

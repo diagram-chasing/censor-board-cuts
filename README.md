@@ -1,6 +1,6 @@
 # censor-board-cuts
 
-*Note: Data updates paused as of June 12th, due to breaking changes on the e-Cinepramaan portal*
+*Note: Data updates after 12th June 2025 are based on certificate URLs contributed on the [CBFC Watch](https://cbfc.watch) contributions page*
 
 Dataset and related anlysis of modifications or cuts made by the [Central Board of Film Certification (CBFC), India](https://www.cbfcindia.gov.in/).
 
@@ -32,9 +32,9 @@ The code-based analysis is done by a Python script [`scripts/analysis/main.py`](
 - Standardizes duration formats and attempts to pull out timestamps from the descriptions.
 - Categorizes modifications based on type (audio, visual, deletion, etc.) and the basic type of content (violence, nudity, etc.) using an LLM.
 
-## TODO
+## Explore
 
-- [ ] Create a dashboard for exploring the data.
+Explore the data on [CBFC Watch](https://cbfc.watch).
 
 ## Related Projects
 
