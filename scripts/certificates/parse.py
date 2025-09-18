@@ -36,6 +36,18 @@ class CBFCParser:
             except Exception as e:
                 logger.error(f"Error loading processed IDs: {str(e)}")
 
+    def _sanitize_filename(self, certificate_id: str) -> str:
+        """Sanitize certificate ID for use as filename by replacing problematic characters"""
+        return certificate_id.replace('/', '_').replace('=', '_eq_').replace('+', '_plus_')
+    
+    def _unsanitize_filename(self, filename: str) -> str:
+        """Convert sanitized filename back to original certificate ID"""
+        # Remove .html extension first
+        cert_id = filename.replace('.html', '')
+        # Reverse the sanitization in correct order (most specific first)
+        cert_id = cert_id.replace('_plus_', '+').replace('_eq_', '=').replace('_', '/')
+        return cert_id
+
     def clean_text(self, text: str) -> str:
         """Clean text by removing HTML and normalizing whitespace"""
         if not text:
@@ -186,7 +198,8 @@ class CBFCParser:
     def parse_certificate_details(self, certificate_id: str) -> Optional[Dict]:
         """Parse certificate details from a local HTML file"""
         try:
-            html_path = self.html_dir / f"{certificate_id}.html"
+            safe_filename = self._sanitize_filename(certificate_id)
+            html_path = self.html_dir / f"{safe_filename}.html"
             
             if not html_path.exists():
                 logger.warning(f"HTML file not found for certificate ID: {certificate_id}")
@@ -319,7 +332,7 @@ class CBFCParser:
         total_files = len(html_files)
         
         # Filter out already processed files
-        files_to_process = [f for f in html_files if f.stem not in self.processed_ids]
+        files_to_process = [f for f in html_files if self._unsanitize_filename(f.name) not in self.processed_ids]
         logger.debug(f"Found {total_files} HTML files, {len(files_to_process)} not yet processed")
         
         metadata_records = []
@@ -328,7 +341,8 @@ class CBFCParser:
         
         # Process each HTML file
         for html_file in files_to_process:
-            certificate_id = html_file.stem
+            # Convert sanitized filename back to original certificate ID
+            certificate_id = self._unsanitize_filename(html_file.name)
             
             result = self.parse_certificate_details(certificate_id)
             if not result:
