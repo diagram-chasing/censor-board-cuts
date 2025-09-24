@@ -11,7 +11,7 @@ Dataset files of modifications or cuts made by the [Central Board of Film Certif
 | Variable | Type | Description |
 |----------|-----------|-------------|
 | `id` | integer | Unique identifier for the certification, used in the ecinepramaan site |
-| `certificate_id` | string | Unique identifier for the certification, used in the cbfcindia site |
+| `certificate_id` | string | Unique identifier for the certification, used in the cbfcindia site. Includes both legacy 16-digit numeric format (e.g., `100090292400000145`) and new Base64-encoded format (e.g., `YRZpHtUg5GVvseP6R9BFd5BV0z2zrja4PEK6XhOlioc=`) |
 | `movie_name` | string | Name of the film |
 | `language` | string | Language of the film |
 | `duration_secs` | float | Film duration in seconds |

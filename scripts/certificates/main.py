@@ -11,7 +11,7 @@ from parse import CBFCParser
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format='%(asctime)s [%(levelname)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
@@ -94,23 +94,18 @@ def process_region_year(scraper: CBFCScraper, region: int, year: int, max_seq: i
             # Check which IDs were actually valid by examining the HTML files
             valid_ids = set()
             for cert_id in current_batch:
-                html_path = Path(f'raw/html/{cert_id}.html')
+                # Use scraper's method to check if HTML exists and is valid
+                html_exists, _ = scraper.html_exists_and_valid(cert_id)
                 
                 # Fetch certificate if it doesn't exist locally
-                if not html_path.exists():
+                if not html_exists:
                     logger.debug(f"Fetching certificate ID: {cert_id}")
                     result = scraper.get_certificate_details(cert_id)
                     if result:
                         valid_ids.add(cert_id)
                 else:
-                    # Check validity of existing HTML file
-                    try:
-                        with open(html_path, 'r', encoding='utf-8') as f:
-                            content = f.read()
-                            if "This certificate does not exist in our database" not in content and len(content) > 100:
-                                valid_ids.add(cert_id)
-                    except Exception as e:
-                        logger.error(f"Error reading HTML file for {cert_id}: {str(e)}")
+                    # HTML exists and is valid
+                    valid_ids.add(cert_id)
             
             # Only mark valid IDs as completed
             completed_ids.update(valid_ids)
@@ -141,6 +136,36 @@ def process_region_year(scraper: CBFCScraper, region: int, year: int, max_seq: i
                 
     return valid_ids
 
+def load_certificate_urls_from_file() -> Set[str]:
+    """
+    Load certificate URLs from certificates.txt and extract certificate IDs.
+    
+    Returns:
+        Set of certificate IDs extracted from URLs
+    """
+    certificates_file = Path('certificates.txt')
+    certificate_ids = set()
+    
+    if not certificates_file.exists():
+        logger.error("certificates.txt file not found")
+        return certificate_ids
+    
+    try:
+        with open(certificates_file, 'r') as f:
+            for line in f:
+                line = line.strip().strip('"')  # Remove quotes and whitespace
+                if line and line.startswith('http'):
+                    # Extract certificate ID from URL
+                    # URLs can be in format: ...&i=CERTIFICATE_ID or ...&i=ENCODED_ID
+                    if '&i=' in line:
+                        cert_id = line.split('&i=')[-1]
+                        certificate_ids.add(cert_id)
+    except Exception as e:
+        logger.error(f"Error reading certificates.txt: {str(e)}")
+    
+    logger.info(f"Loaded {len(certificate_ids)} certificate IDs from certificates.txt")
+    return certificate_ids
+
 def main():
     # Setup command line argument parser
     parser = argparse.ArgumentParser(description='CBFC Certificate Scraper')
@@ -151,6 +176,7 @@ def main():
     parser.add_argument('--all', action='store_true', help='Process all regions and years (2025-2024)')
     parser.add_argument('--parse-only', action='store_true', help='Skip scraping and only parse existing HTML files')
     parser.add_argument('--skip-parse', action='store_true', help='Skip parsing after scraping')
+    parser.add_argument('--generate-ids', action='store_true', help='Generate certificate IDs using region/year pattern instead of using certificates.txt')
 
     # Parse arguments
     args = parser.parse_args()
@@ -172,26 +198,47 @@ def main():
     
     valid_ids = []
     
-    # Check the arguments
-    if args.all or (args.region is None and args.year is None):
-        # Process all regions and years
-        logger.debug(f"Processing all regions for years 2025-2024 (max_seq={args.max_seq}, max_failures={args.max_failures})")
+    # Check if we should generate IDs using region/year pattern or use certificates.txt
+    if args.generate_ids:
+        # Use existing ID generation logic
+        logger.info("Using ID generation based on region/year pattern")
         
-        for year in range(2025, 2024, -1):  # 2025 to 2024 in descending order
-            for region in range(1, 10):  # 1 to 9 for all regions
-                logger.info(f"Processing region {region} for year {year}")
-                region_ids = process_region_year(scraper, region, year, args.max_seq, args.max_failures)
-                valid_ids.extend(region_ids)
-    elif args.region is not None and args.year is not None:
-        # Process specific region and year
-        logger.info(f"Processing region {args.region} for year {args.year} (max_seq={args.max_seq}, max_failures={args.max_failures})")
-        region_ids = process_region_year(scraper, args.region, args.year, args.max_seq, args.max_failures)
-        valid_ids.extend(region_ids)
+        # Check the arguments for ID generation
+        if args.all or (args.region is None and args.year is None):
+            # Process all regions and years
+            logger.debug(f"Processing all regions for years 2025-2024 (max_seq={args.max_seq}, max_failures={args.max_failures})")
+            
+            for year in range(2025, 2024, -1):  # 2025 to 2024 in descending order
+                for region in range(1, 10):  # 1 to 9 for all regions
+                    logger.info(f"Processing region {region} for year {year}")
+                    region_ids = process_region_year(scraper, region, year, args.max_seq, args.max_failures)
+                    valid_ids.extend(region_ids)
+        elif args.region is not None and args.year is not None:
+            # Process specific region and year
+            logger.info(f"Processing region {args.region} for year {args.year} (max_seq={args.max_seq}, max_failures={args.max_failures})")
+            region_ids = process_region_year(scraper, args.region, args.year, args.max_seq, args.max_failures)
+            valid_ids.extend(region_ids)
+        else:
+            # If only one of region or year is provided
+            parser.print_help()
+            logger.error("Both --region and --year must be provided together when using --generate-ids.")
+            sys.exit(1)
     else:
-        # If only one of region or year is provided
-        parser.print_help()
-        logger.error("Both --region and --year must be provided together.")
-        sys.exit(1)
+        # Use certificate IDs from certificates.txt (default behavior)
+        logger.info("Using certificate IDs from certificates.txt")
+        certificate_ids = load_certificate_urls_from_file()
+        
+        if not certificate_ids:
+            logger.error("No valid certificate IDs found in certificates.txt. Use --generate-ids to generate IDs instead.")
+            sys.exit(1)
+        
+        # Process each certificate ID from the file
+        logger.info(f"Processing {len(certificate_ids)} certificate IDs from certificates.txt")
+        for cert_id in certificate_ids:
+            logger.debug(f"Processing certificate ID: {cert_id}")
+            result = scraper.get_certificate_details(cert_id)
+            if result:
+                valid_ids.append(result)
     
     logger.debug(f"Scraping complete! Processed {len(valid_ids)} certificates.")
     

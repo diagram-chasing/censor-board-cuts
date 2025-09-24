@@ -78,9 +78,14 @@ class CBFCScraper:
             
         return True
             
+    def _sanitize_filename(self, certificate_id: str) -> str:
+        """Sanitize certificate ID for use as filename by replacing problematic characters"""
+        return certificate_id.replace('/', '_').replace('=', '_eq_').replace('+', '_plus_')
+
     def html_exists_and_valid(self, certificate_id: str) -> Tuple[bool, Optional[str]]:
         """Check if HTML for the certificate ID exists and is valid"""
-        html_path = Path('raw/html') / f"{certificate_id}.html"
+        safe_filename = self._sanitize_filename(certificate_id)
+        html_path = Path('raw/html') / f"{safe_filename}.html"
         
         if not html_path.exists():
             return False, None
@@ -127,7 +132,8 @@ class CBFCScraper:
                 # Save the raw HTML response
                 html_dir = Path('raw/html')
                 html_dir.mkdir(parents=True, exist_ok=True)
-                html_file = html_dir / f"{certificate_id}.html"
+                safe_filename = self._sanitize_filename(certificate_id)
+                html_file = html_dir / f"{safe_filename}.html"
                 with open(html_file, 'w', encoding='utf-8') as f:
                     f.write(response.text)
                 logger.debug(f"Saved raw HTML for certificate ID: {certificate_id}")
