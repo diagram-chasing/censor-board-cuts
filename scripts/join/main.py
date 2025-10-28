@@ -59,16 +59,16 @@ def join_datasets(project_root):
         
         # Read the input files
         logger.debug(f"Reading {metadata_modifications_path}")
-        metadata_df = pd.read_csv(metadata_modifications_path)
+        metadata_df = pd.read_csv(metadata_modifications_path, dtype={'id': str, 'certificate_id': str})
         
         logger.debug(f"Reading {imdb_path}")
-        imdb_df = pd.read_csv(imdb_path, sep=';')
+        imdb_df = pd.read_csv(imdb_path, sep=';', dtype={'original_id': str})
         imdb_df.columns = ["imdb_" + col for col in imdb_df.columns]
         imdb_df.rename(columns={'imdb_original_id': 'id'}, inplace=True)
         imdb_df.rename(columns={'imdb_imdb_id': 'imdb_id'}, inplace=True)
         
         logger.debug(f"Reading {llm_path}")
-        llm_df = pd.read_csv(llm_path)
+        llm_df = pd.read_csv(llm_path, dtype={'certificate_id': str})
         
         # Join the dataframes
         logger.debug("Merging datasets...")
@@ -97,12 +97,10 @@ def join_datasets(project_root):
         logger.debug("Length after merging with imdb: " + str(len(merged_df)))
 
         # Set 0 for blank values in imdb_id column and convert column to int
-        merged_df['imdb_id'] = merged_df['imdb_id'].fillna(0)
-        merged_df['imdb_id'] = merged_df['imdb_id'].astype(int)
+        merged_df.loc[:, 'imdb_id'] = merged_df['imdb_id'].fillna(0).astype(int)
 
         # Set 0 for blank values in imdb_year column and convert column to int
-        merged_df['imdb_year'] = merged_df['imdb_year'].fillna(0)
-        merged_df['imdb_year'] = merged_df['imdb_year'].astype(int)
+        merged_df.loc[:, 'imdb_year'] = merged_df['imdb_year'].fillna(0).astype(int)
 
         # Drop IMDB columns for rows where movie_name and imdb_title are not similar
         logger.debug("Checking similarity between movie_name and imdb_title...")
