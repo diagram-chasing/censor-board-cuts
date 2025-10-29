@@ -222,7 +222,7 @@ def main():
     ia = Cinemagoer()
     
     # Read movie titles and IDs from input file
-    movie_data = {}  # Dictionary to store movie_name -> id mapping
+    movie_data = {}  # Dictionary to store movie_name -> list of ids mapping
     try:
         with open(INPUT_FILE, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
@@ -231,12 +231,17 @@ def main():
                     movie_name = row['movie_name']
                     movie_id = row.get('id', '')
                     if movie_id not in completed_ids:
-                        movie_data[movie_name] = movie_id
+                        # Store all IDs for each movie name
+                        if movie_name not in movie_data:
+                            movie_data[movie_name] = []
+                        movie_data[movie_name].append(movie_id)
 
         # Get unique movie titles
         movie_titles = list(movie_data.keys())
         
-        logger.debug(f"Read {len(movie_titles)} movie titles from {INPUT_FILE}")
+        # Count total IDs (some movies have multiple certificate IDs)
+        total_ids = sum(len(ids) for ids in movie_data.values())
+        logger.debug(f"Read {len(movie_titles)} unique movie titles with {total_ids} total certificate IDs from {INPUT_FILE}")
     except Exception as e:
         logger.error(f"Error reading input file: {e}")
         return
@@ -310,32 +315,36 @@ def main():
             # Process each movie title
             for movie_title in tqdm(movie_titles, desc="Fetching IMDb data"):
                 try:
-                    # Skip if original_id already exists in the output file or completed.json
-                    original_id = movie_data.get(movie_title, '')
-
-                    if original_id and (original_id in existing_original_ids or original_id in completed_ids):
-                        logger.debug(f"Skipping movie with existing original_id: {movie_title} (ID: {original_id})")
+                    # Get all certificate IDs for this movie
+                    original_ids = movie_data.get(movie_title, [])
+                    
+                    # Filter out IDs that already exist
+                    new_ids = [oid for oid in original_ids if oid not in existing_original_ids and oid not in completed_ids]
+                    
+                    if not new_ids:
+                        logger.debug(f"Skipping movie - all certificate IDs already processed: {movie_title}")
                         continue
 
-                    # Add the original_id to the completed_ids set
-                    completed_ids.add(original_id)
-                    save_completed_ids(completed_ids)
-
                     # Log the movie title
-                    logger.info(f"Processing movie: {movie_title}")
+                    logger.info(f"Processing movie: {movie_title} (with {len(new_ids)} certificate IDs)")
 
                     # Search for the movie
                     search_results = ia.search_movie(movie_title)
                     
                     if not search_results:
                         logger.warning(f"No results found for: {movie_title}")
+                        # Mark all IDs as completed even if no results found
+                        for original_id in new_ids:
+                            completed_ids.add(original_id)
+                        save_completed_ids(completed_ids)
                         continue
                     
                     # Get the first matching movie ID
                     movie_id = search_results[0].movieID
                     if movie_id in existing_movies:
-                        logger.info(f"Skipping already scraped movie: {movie_title} (ID: {movie_id})")
-                        continue
+                        logger.info(f"IMDb data already fetched for: {movie_title} (IMDb ID: {movie_id}), writing for new certificate IDs")
+                        # If we already have the IMDb data, we should still write rows for new certificate IDs
+                        # We'll need to fetch the movie details again to write the rows
                     
                     # Get the movie details
                     movie = ia.get_movie(movie_id)
@@ -343,9 +352,8 @@ def main():
                     # Log the selected movie
                     logger.info(f"Selected movie: {movie.get('title', '')} ({movie.get('year', '')})")
                     
-                    # Extract data (using field names that match existing CSV)
-                    movie_data_entry = {
-                        'original_id': original_id,
+                    # Create base movie data (common for all certificate IDs)
+                    base_movie_data = {
                         'imdb_id': movie_id,
                         'title': movie.get('title', ''),
                         'year': movie.get('year', ''),
@@ -364,16 +372,29 @@ def main():
                         'poster_url': movie.get('full-size cover url', '') or movie.get('cover url', '')
                     }
                     
-                    # Write to CSV
-                    writer.writerow(movie_data_entry)
+                    # Write one row per certificate ID
+                    for original_id in new_ids:
+                        movie_data_entry = {
+                            'original_id': original_id,
+                            **base_movie_data
+                        }
+                        
+                        # Write to CSV
+                        writer.writerow(movie_data_entry)
+                        
+                        # Mark as completed
+                        completed_ids.add(original_id)
+                        if original_id:
+                            existing_original_ids.add(original_id)
                     
                     # Flush the file to ensure data is written immediately
                     f.flush()
                     
-                    # Add the movie to our set of existing movies and completed IDs
+                    # Save completed IDs
+                    save_completed_ids(completed_ids)
+                    
+                    # Add the movie to our set of existing movies
                     existing_movies.add(movie_id)
-                    if original_id:
-                        existing_original_ids.add(original_id)
                     
                     # Sleep to avoid hitting rate limits
                     time.sleep(1)
