@@ -3,7 +3,7 @@ import csv
 import os
 import time
 import json
-from imdb import Cinemagoer
+from imdbinfo import get_movie, search_title
 import logging
 from tqdm import tqdm
 
@@ -78,13 +78,12 @@ def load_overrides():
     
     return overrides
 
-def fetch_override_imdb_details(ia, overrides):
+def fetch_override_imdb_details(overrides):
     """
     Fetch IMDB details for override entries and update the output file
     This function will overwrite any existing entries for the certificate IDs in overrides
     
     Args:
-        ia: Cinemagoer instance
         overrides: Dictionary mapping certificate_id to imdb_id
     """
     if not overrides:
@@ -117,20 +116,20 @@ def fetch_override_imdb_details(ia, overrides):
     override_data = []
     for certificate_id, imdb_id in tqdm(overrides.items(), desc="Fetching override IMDB data"):
         try:
-            # Extract movie ID from IMDB ID (remove 'tt' prefix)
-            movie_id = imdb_id.replace('tt', '') if imdb_id.startswith('tt') else imdb_id
+            # Ensure IMDB ID has 'tt' prefix (imdbinfo accepts both formats)
+            movie_id = imdb_id if imdb_id.startswith('tt') else f'tt{imdb_id}'
             
             logger.info(f"Fetching IMDB details for override: {certificate_id} -> {imdb_id}")
             
             # Get the movie details
-            movie = ia.get_movie(movie_id)
+            movie = get_movie(movie_id)
             
             if not movie:
                 logger.warning(f"No movie found for IMDB ID: {imdb_id}")
                 continue
             
             # Log the selected movie
-            logger.info(f"Found movie: {movie.get('title', '')} ({movie.get('year', '')})")
+            logger.info(f"Found movie: {movie.title} ({movie.year})")
             
             # Create the data entry using the same field names as the existing CSV
             movie_data_entry = {}
@@ -147,24 +146,47 @@ def fetch_override_imdb_details(ia, overrides):
                     movie_data_entry[field_name] = ''
             
             # Now populate with actual data (using field names that match existing CSV)
+            # Extract movie ID without 'tt' prefix for storage
+            stored_movie_id = movie_id.replace('tt', '') if movie_id.startswith('tt') else movie_id
+            
+            # Extract directors
+            directors_list = []
+            if hasattr(movie, 'directors') and movie.directors:
+                directors_list = [d.name if hasattr(d, 'name') else str(d) for d in movie.directors]
+            
+            # Extract actors (cast)
+            actors_list = []
+            if hasattr(movie, 'actors') and movie.actors:
+                actors_list = [a.name if hasattr(a, 'name') else str(a) for a in movie.actors[:10]]  # Top 10 cast
+            
+            # Extract writers
+            writers_list = []
+            if hasattr(movie, 'writers') and movie.writers:
+                writers_list = [w.name if hasattr(w, 'name') else str(w) for w in movie.writers]
+            
+            # Extract production companies
+            studios_list = []
+            if hasattr(movie, 'production_companies') and movie.production_companies:
+                studios_list = [company.name if hasattr(company, 'name') else str(company) for company in movie.production_companies]
+            
             movie_data_entry.update({
                 'original_id': certificate_id,
-                'imdb_id': movie_id,
-                'title': movie.get('title', ''),
-                'year': movie.get('year', ''),
-                'genres': "|".join(movie.get('genres', [])),
-                'rating': movie.get('rating', ''),
-                'votes': movie.get('votes', ''),
-                'directors': "|".join([d.get('name', '') for d in movie.get('directors', [])]),
-                'actors': "|".join([c.get('name', '') for c in movie.get('cast', [])[:10]]),  # Top 10 cast
-                'runtime': movie.get('runtimes', [''])[0] if movie.get('runtimes') else '',
-                'countries': "|".join(movie.get('countries', [])),
-                'languages': "|".join(movie.get('languages', [])),
-                'overview': movie.get('plot', [''])[0] if movie.get('plot') else '',
-                'release_date': movie.get('original air date', '') or movie.get('year', ''),
-                'writers': "|".join([w.get('name', '') for w in movie.get('writers', [])]),
-                'studios': "|".join([company.get('name', '') if hasattr(company, 'get') else str(company) for company in movie.get('production companies', [])]),
-                'poster_url': movie.get('full-size cover url', '') or movie.get('cover url', '')
+                'imdb_id': stored_movie_id,
+                'title': movie.title if hasattr(movie, 'title') else '',
+                'year': str(movie.year) if hasattr(movie, 'year') and movie.year else '',
+                'genres': "|".join(movie.genres) if hasattr(movie, 'genres') and movie.genres else '',
+                'rating': str(movie.rating) if hasattr(movie, 'rating') and movie.rating else '',
+                'votes': str(movie.votes) if hasattr(movie, 'votes') and movie.votes else '',
+                'directors': "|".join(directors_list),
+                'actors': "|".join(actors_list),
+                'runtime': str(movie.runtime) if hasattr(movie, 'runtime') and movie.runtime else '',
+                'countries': "|".join(movie.countries) if hasattr(movie, 'countries') and movie.countries else '',
+                'languages': "|".join(movie.languages) if hasattr(movie, 'languages') and movie.languages else '',
+                'overview': movie.plot if hasattr(movie, 'plot') and movie.plot else '',
+                'release_date': str(movie.release_date) if hasattr(movie, 'release_date') and movie.release_date else (str(movie.year) if hasattr(movie, 'year') and movie.year else ''),
+                'writers': "|".join(writers_list),
+                'studios': "|".join(studios_list),
+                'poster_url': movie.poster_url if hasattr(movie, 'poster_url') and movie.poster_url else ''
             })
             
             override_data.append(movie_data_entry)
@@ -217,9 +239,6 @@ def main():
     # Load completed IDs
     completed_ids = load_completed_ids()
     logger.debug(f"Loaded {len(completed_ids)} completed IDs from {COMPLETED_FILE}")
-    
-    # Initialize the Cinemagoer
-    ia = Cinemagoer()
     
     # Read movie titles and IDs from input file
     movie_data = {}  # Dictionary to store movie_name -> list of ids mapping
@@ -278,7 +297,7 @@ def main():
     overrides = load_overrides()
     if overrides:
         logger.info("Processing manual overrides...")
-        fetch_override_imdb_details(ia, overrides)
+        fetch_override_imdb_details(overrides)
         
         # Reload existing data after overrides have been processed
         existing_movies = set()
@@ -329,9 +348,9 @@ def main():
                     logger.info(f"Processing movie: {movie_title} (with {len(new_ids)} certificate IDs)")
 
                     # Search for the movie
-                    search_results = ia.search_movie(movie_title)
+                    search_results = search_title(movie_title)
                     
-                    if not search_results:
+                    if not search_results or not search_results.titles:
                         logger.warning(f"No results found for: {movie_title}")
                         # Mark all IDs as completed even if no results found
                         for original_id in new_ids:
@@ -340,36 +359,68 @@ def main():
                         continue
                     
                     # Get the first matching movie ID
-                    movie_id = search_results[0].movieID
-                    if movie_id in existing_movies:
-                        logger.info(f"IMDb data already fetched for: {movie_title} (IMDb ID: {movie_id}), writing for new certificate IDs")
+                    first_result = search_results.titles[0]
+                    movie_id = first_result.imdb_id
+                    # Remove 'tt' prefix for storage consistency
+                    stored_movie_id = movie_id.replace('tt', '') if movie_id.startswith('tt') else movie_id
+                    
+                    if stored_movie_id in existing_movies:
+                        logger.info(f"IMDb data already fetched for: {movie_title} (IMDb ID: {stored_movie_id}), writing for new certificate IDs")
                         # If we already have the IMDb data, we should still write rows for new certificate IDs
                         # We'll need to fetch the movie details again to write the rows
                     
                     # Get the movie details
-                    movie = ia.get_movie(movie_id)
+                    movie = get_movie(movie_id)
+                    
+                    if not movie:
+                        logger.warning(f"No movie found for IMDB ID: {movie_id}")
+                        # Mark all IDs as completed even if no movie found
+                        for original_id in new_ids:
+                            completed_ids.add(original_id)
+                        save_completed_ids(completed_ids)
+                        continue
 
                     # Log the selected movie
-                    logger.info(f"Selected movie: {movie.get('title', '')} ({movie.get('year', '')})")
+                    logger.info(f"Selected movie: {movie.title} ({movie.year})")
                     
                     # Create base movie data (common for all certificate IDs)
+                    # Extract directors
+                    directors_list = []
+                    if hasattr(movie, 'directors') and movie.directors:
+                        directors_list = [d.name if hasattr(d, 'name') else str(d) for d in movie.directors]
+                    
+                    # Extract actors (cast)
+                    actors_list = []
+                    if hasattr(movie, 'actors') and movie.actors:
+                        actors_list = [a.name if hasattr(a, 'name') else str(a) for a in movie.actors[:10]]  # Top 10 cast
+                    
+                    # Extract writers
+                    writers_list = []
+                    if hasattr(movie, 'writers') and movie.writers:
+                        writers_list = [w.name if hasattr(w, 'name') else str(w) for w in movie.writers]
+                    
+                    # Extract production companies
+                    studios_list = []
+                    if hasattr(movie, 'production_companies') and movie.production_companies:
+                        studios_list = [company.name if hasattr(company, 'name') else str(company) for company in movie.production_companies]
+                    
                     base_movie_data = {
-                        'imdb_id': movie_id,
-                        'title': movie.get('title', ''),
-                        'year': movie.get('year', ''),
-                        'genres': "|".join(movie.get('genres', [])),
-                        'rating': movie.get('rating', ''),
-                        'votes': movie.get('votes', ''),
-                        'directors': "|".join([d.get('name', '') for d in movie.get('directors', [])]),
-                        'actors': "|".join([c.get('name', '') for c in movie.get('cast', [])[:10]]),  # Top 10 cast
-                        'runtime': movie.get('runtimes', [''])[0] if movie.get('runtimes') else '',
-                        'countries': "|".join(movie.get('countries', [])),
-                        'languages': "|".join(movie.get('languages', [])),
-                        'overview': movie.get('plot', [''])[0] if movie.get('plot') else '',
-                        'release_date': movie.get('original air date', '') or movie.get('year', ''),
-                        'writers': "|".join([w.get('name', '') for w in movie.get('writers', [])]),
-                        'studios': "|".join([company.get('name', '') if hasattr(company, 'get') else str(company) for company in movie.get('production companies', [])]),
-                        'poster_url': movie.get('full-size cover url', '') or movie.get('cover url', '')
+                        'imdb_id': stored_movie_id,
+                        'title': movie.title if hasattr(movie, 'title') else '',
+                        'year': str(movie.year) if hasattr(movie, 'year') and movie.year else '',
+                        'genres': "|".join(movie.genres) if hasattr(movie, 'genres') and movie.genres else '',
+                        'rating': str(movie.rating) if hasattr(movie, 'rating') and movie.rating else '',
+                        'votes': str(movie.votes) if hasattr(movie, 'votes') and movie.votes else '',
+                        'directors': "|".join(directors_list),
+                        'actors': "|".join(actors_list),
+                        'runtime': str(movie.runtime) if hasattr(movie, 'runtime') and movie.runtime else '',
+                        'countries': "|".join(movie.countries) if hasattr(movie, 'countries') and movie.countries else '',
+                        'languages': "|".join(movie.languages) if hasattr(movie, 'languages') and movie.languages else '',
+                        'overview': movie.plot if hasattr(movie, 'plot') and movie.plot else '',
+                        'release_date': str(movie.release_date) if hasattr(movie, 'release_date') and movie.release_date else (str(movie.year) if hasattr(movie, 'year') and movie.year else ''),
+                        'writers': "|".join(writers_list),
+                        'studios': "|".join(studios_list),
+                        'poster_url': movie.poster_url if hasattr(movie, 'poster_url') and movie.poster_url else ''
                     }
                     
                     # Write one row per certificate ID
@@ -394,7 +445,7 @@ def main():
                     save_completed_ids(completed_ids)
                     
                     # Add the movie to our set of existing movies
-                    existing_movies.add(movie_id)
+                    existing_movies.add(stored_movie_id)
                     
                     # Sleep to avoid hitting rate limits
                     time.sleep(1)
