@@ -3,6 +3,7 @@ import csv
 import os
 import time
 import json
+from datetime import datetime
 from imdbinfo import get_movie, search_title
 import logging
 from tqdm import tqdm
@@ -47,6 +48,28 @@ def save_completed_ids(completed_ids):
             json.dump(completed_ids, f)
     except Exception as e:
         logger.error(f"Error saving completed IDs: {e}")
+
+def format_release_date(date_str):
+    """
+    Format release date from 'YYYY-MM-DD' format to 'DD MMM YYYY' format (e.g., '06 May 2022')
+    
+    Args:
+        date_str: Date string in 'YYYY-MM-DD' format or None
+        
+    Returns:
+        Formatted date string or empty string if date_str is None/invalid
+    """
+    if not date_str:
+        return ''
+    
+    try:
+        # Parse the date string
+        date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+        # Format to 'DD MMM YYYY' (e.g., '06 May 2022')
+        return date_obj.strftime('%d %b %Y')
+    except (ValueError, TypeError):
+        # If parsing fails, try to return the original string or empty
+        return str(date_str) if date_str else ''
 
 def load_overrides():
     """
@@ -154,20 +177,52 @@ def fetch_override_imdb_details(overrides):
             if hasattr(movie, 'directors') and movie.directors:
                 directors_list = [d.name if hasattr(d, 'name') else str(d) for d in movie.directors]
             
-            # Extract actors (cast)
+            # Extract actors (cast) from stars
             actors_list = []
-            if hasattr(movie, 'actors') and movie.actors:
-                actors_list = [a.name if hasattr(a, 'name') else str(a) for a in movie.actors[:10]]  # Top 10 cast
+            if hasattr(movie, 'stars') and movie.stars:
+                # Filter stars that are cast members
+                cast_members = [s for s in movie.stars if hasattr(s, 'name') and ('(Cast)' in str(s) or 'Cast' in str(s))]
+                actors_list = [s.name for s in cast_members[:10]]  # Top 10 cast
             
-            # Extract writers
+            # Extract writers from stars (writers might be in stars with "Writer" in the string)
             writers_list = []
-            if hasattr(movie, 'writers') and movie.writers:
-                writers_list = [w.name if hasattr(w, 'name') else str(w) for w in movie.writers]
+            if hasattr(movie, 'stars') and movie.stars:
+                writer_members = [s for s in movie.stars if hasattr(s, 'name') and ('Writer' in str(s) or 'Screenplay' in str(s) or 'Written' in str(s))]
+                writers_list = [s.name for s in writer_members]
             
-            # Extract production companies
+            # Extract production companies from company_credits
             studios_list = []
-            if hasattr(movie, 'production_companies') and movie.production_companies:
-                studios_list = [company.name if hasattr(company, 'name') else str(company) for company in movie.production_companies]
+            if hasattr(movie, 'company_credits') and movie.company_credits:
+                if isinstance(movie.company_credits, dict) and 'production' in movie.company_credits:
+                    production_companies = movie.company_credits['production']
+                    if production_companies:
+                        studios_list = [company.name if hasattr(company, 'name') else str(company) for company in production_companies]
+            
+            # Get runtime from duration (duration is in minutes)
+            runtime_str = ''
+            if hasattr(movie, 'duration') and movie.duration:
+                runtime_str = str(movie.duration)
+            
+            # Get languages using languages_text for full names (not codes)
+            languages_list = []
+            if hasattr(movie, 'languages_text') and movie.languages_text:
+                languages_list = movie.languages_text
+            elif hasattr(movie, 'languages') and movie.languages:
+                # Fallback: if languages_text not available, use languages (might be codes)
+                languages_list = movie.languages
+            
+            # Format release date
+            release_date_str = ''
+            if hasattr(movie, 'release_date') and movie.release_date:
+                release_date_str = format_release_date(movie.release_date)
+            elif hasattr(movie, 'year') and movie.year:
+                # Fallback to year if release_date not available
+                release_date_str = str(movie.year)
+            
+            # Get poster URL from cover_url
+            poster_url_str = ''
+            if hasattr(movie, 'cover_url') and movie.cover_url:
+                poster_url_str = movie.cover_url
             
             movie_data_entry.update({
                 'original_id': certificate_id,
@@ -179,14 +234,14 @@ def fetch_override_imdb_details(overrides):
                 'votes': str(movie.votes) if hasattr(movie, 'votes') and movie.votes else '',
                 'directors': "|".join(directors_list),
                 'actors': "|".join(actors_list),
-                'runtime': str(movie.runtime) if hasattr(movie, 'runtime') and movie.runtime else '',
+                'runtime': runtime_str,
                 'countries': "|".join(movie.countries) if hasattr(movie, 'countries') and movie.countries else '',
-                'languages': "|".join(movie.languages) if hasattr(movie, 'languages') and movie.languages else '',
+                'languages': "|".join(languages_list),
                 'overview': movie.plot if hasattr(movie, 'plot') and movie.plot else '',
-                'release_date': str(movie.release_date) if hasattr(movie, 'release_date') and movie.release_date else (str(movie.year) if hasattr(movie, 'year') and movie.year else ''),
+                'release_date': release_date_str,
                 'writers': "|".join(writers_list),
                 'studios': "|".join(studios_list),
-                'poster_url': movie.poster_url if hasattr(movie, 'poster_url') and movie.poster_url else ''
+                'poster_url': poster_url_str
             })
             
             override_data.append(movie_data_entry)
@@ -389,20 +444,52 @@ def main():
                     if hasattr(movie, 'directors') and movie.directors:
                         directors_list = [d.name if hasattr(d, 'name') else str(d) for d in movie.directors]
                     
-                    # Extract actors (cast)
+                    # Extract actors (cast) from stars
                     actors_list = []
-                    if hasattr(movie, 'actors') and movie.actors:
-                        actors_list = [a.name if hasattr(a, 'name') else str(a) for a in movie.actors[:10]]  # Top 10 cast
+                    if hasattr(movie, 'stars') and movie.stars:
+                        # Filter stars that are cast members
+                        cast_members = [s for s in movie.stars if hasattr(s, 'name') and ('(Cast)' in str(s) or 'Cast' in str(s))]
+                        actors_list = [s.name for s in cast_members[:10]]  # Top 10 cast
                     
-                    # Extract writers
+                    # Extract writers from stars (writers might be in stars with "Writer" in the string)
                     writers_list = []
-                    if hasattr(movie, 'writers') and movie.writers:
-                        writers_list = [w.name if hasattr(w, 'name') else str(w) for w in movie.writers]
+                    if hasattr(movie, 'stars') and movie.stars:
+                        writer_members = [s for s in movie.stars if hasattr(s, 'name') and ('Writer' in str(s) or 'Screenplay' in str(s) or 'Written' in str(s))]
+                        writers_list = [s.name for s in writer_members]
                     
-                    # Extract production companies
+                    # Extract production companies from company_credits
                     studios_list = []
-                    if hasattr(movie, 'production_companies') and movie.production_companies:
-                        studios_list = [company.name if hasattr(company, 'name') else str(company) for company in movie.production_companies]
+                    if hasattr(movie, 'company_credits') and movie.company_credits:
+                        if isinstance(movie.company_credits, dict) and 'production' in movie.company_credits:
+                            production_companies = movie.company_credits['production']
+                            if production_companies:
+                                studios_list = [company.name if hasattr(company, 'name') else str(company) for company in production_companies]
+                    
+                    # Get runtime from duration (duration is in minutes)
+                    runtime_str = ''
+                    if hasattr(movie, 'duration') and movie.duration:
+                        runtime_str = str(movie.duration)
+                    
+                    # Get languages using languages_text for full names (not codes)
+                    languages_list = []
+                    if hasattr(movie, 'languages_text') and movie.languages_text:
+                        languages_list = movie.languages_text
+                    elif hasattr(movie, 'languages') and movie.languages:
+                        # Fallback: if languages_text not available, use languages (might be codes)
+                        languages_list = movie.languages
+                    
+                    # Format release date
+                    release_date_str = ''
+                    if hasattr(movie, 'release_date') and movie.release_date:
+                        release_date_str = format_release_date(movie.release_date)
+                    elif hasattr(movie, 'year') and movie.year:
+                        # Fallback to year if release_date not available
+                        release_date_str = str(movie.year)
+                    
+                    # Get poster URL from cover_url
+                    poster_url_str = ''
+                    if hasattr(movie, 'cover_url') and movie.cover_url:
+                        poster_url_str = movie.cover_url
                     
                     base_movie_data = {
                         'imdb_id': stored_movie_id,
@@ -413,14 +500,14 @@ def main():
                         'votes': str(movie.votes) if hasattr(movie, 'votes') and movie.votes else '',
                         'directors': "|".join(directors_list),
                         'actors': "|".join(actors_list),
-                        'runtime': str(movie.runtime) if hasattr(movie, 'runtime') and movie.runtime else '',
+                        'runtime': runtime_str,
                         'countries': "|".join(movie.countries) if hasattr(movie, 'countries') and movie.countries else '',
-                        'languages': "|".join(movie.languages) if hasattr(movie, 'languages') and movie.languages else '',
+                        'languages': "|".join(languages_list),
                         'overview': movie.plot if hasattr(movie, 'plot') and movie.plot else '',
-                        'release_date': str(movie.release_date) if hasattr(movie, 'release_date') and movie.release_date else (str(movie.year) if hasattr(movie, 'year') and movie.year else ''),
+                        'release_date': release_date_str,
                         'writers': "|".join(writers_list),
                         'studios': "|".join(studios_list),
-                        'poster_url': movie.poster_url if hasattr(movie, 'poster_url') and movie.poster_url else ''
+                        'poster_url': poster_url_str
                     }
                     
                     # Write one row per certificate ID
