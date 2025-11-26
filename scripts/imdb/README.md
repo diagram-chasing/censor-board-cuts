@@ -1,6 +1,6 @@
 # censor-board-cuts imdb script
 
-The IMDB pipeline fetches movie data from IMDB using the `cinemagoer` library to enrich the metadata.
+The IMDB pipeline fetches movie data from IMDB using the `imdbinfo` library to enrich the metadata.
 
 ## Usage
 
