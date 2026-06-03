@@ -21,5 +21,9 @@ scripts/categories/pipeline.log
 scripts/categories/raw
 
 scripts/imdb/imdb_fetch.log
+scripts/imdb/.cache/
 
 data/individual_files
+
+node_modules/
+.wrangler/

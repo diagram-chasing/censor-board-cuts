@@ -10,3 +10,6 @@ pyOpenSSL==25.0.0
 google-generativeai==0.8.5
 tqdm==4.67.1
 numpy==2.2.4
+imdbinfo==0.9.1
+python-dotenv==1.2.2
+google-genai==2.7.0
