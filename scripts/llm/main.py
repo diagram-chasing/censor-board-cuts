@@ -32,7 +32,7 @@ def setup_model():
     )
 
     # Updated schema based on the new prompt
-    model = "gemini-2.0-flash-lite"
+    model = "gemini-2.5-flash-lite"
     response_schema = types.Schema(
         type='OBJECT',
         required=["cleaned_description", "reference", "action", "content_types", "media_element"],

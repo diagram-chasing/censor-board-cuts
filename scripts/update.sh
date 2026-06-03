@@ -25,3 +25,19 @@ echo "==> $(wc -l < "$CERT_FILE" | tr -d ' ') certificate URLs written to $CERT_
 echo "==> Running pipeline"
 cd "$REPO_ROOT/scripts"
 "$VENV_PY" main.py "$@"
+
+echo "==> Committing data updates"
+cd "$REPO_ROOT"
+git add -A \
+  data \
+  scripts/analysis/.processed.json \
+  scripts/categories/.last-fetched-date \
+  scripts/certificates/.processed.json \
+  scripts/certificates/certificates.txt \
+  scripts/imdb/.completed.json
+
+if git diff --cached --quiet; then
+  echo "    nothing to commit"
+else
+  git commit -m "Update data files - $(date '+%Y-%m-%d %H:%M:%S')"
+fi
